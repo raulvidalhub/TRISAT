@@ -108,7 +108,7 @@ class GnssTelemetryBridge: ObservableObject {
             if trimmed.hasPrefix("RAW:") {
                 let hexContent = String(trimmed.dropFirst(4))
                 parseBinaryDatagram(hexContent)
-            } else {
+            } else if trimmed.hasPrefix("$") {
                 parseNmeaSentence(trimmed)
             }
         }
@@ -197,26 +197,25 @@ class GnssTelemetryBridge: ObservableObject {
         }
 
         if !parsedSats.isEmpty {
-            if var current = viewModel?.displayedSatellites {
-                current.removeAll(where: { $0.constellation == constKind })
-                current.append(contentsOf: parsedSats)
-                viewModel?.displayedSatellites = current
-            } else {
-                viewModel?.displayedSatellites = parsedSats
-            }
+            guard let vm = viewModel else { return }
+            vm.externalSatellites.removeAll(where: { $0.constellation == constKind })
+            vm.externalSatellites.append(contentsOf: parsedSats)
+            vm.updateSatellites()
         }
     }
 
     private func parseInavSentence(_ text: String) {
         let parts = text.components(separatedBy: ",")
-        let svid = parts.count > 1 ? (Int(parts[1]) ?? 1) : 1
-        let submsgId = parts.count > 2 ? (Int(parts[2]) ?? 1) : 1
+        guard parts.count >= 4,
+              let svid = Int(parts[1]), (1...36).contains(svid),
+              let submsgId = Int(parts[2]),
+              let payload = GalileoINavMessage.decodeHexPayload(parts[3].components(separatedBy: "*")[0])
+        else { return }
 
-        let dummyData = Data((0..<30).map { _ in UInt8.random(in: 0...255) })
         let msg = GalileoINavMessage(
             svid: svid,
             submessageId: submsgId,
-            data: dummyData,
+            data: payload,
             status: 0,
             timestamp: Date()
         )
@@ -229,25 +228,6 @@ class GnssTelemetryBridge: ObservableObject {
 
     private func parseBinaryDatagram(_ hexString: String) {
         bluetoothManager?.logDebug("RAW $BIN Datagram: \(hexString.prefix(32))...")
-
-        let hexBytes = hexString.components(separatedBy: " ").compactMap { UInt8($0, radix: 16) }
-        let rawData = Data(hexBytes.prefix(30))
-
-        let svid = hexBytes.count > 2 ? Int(hexBytes[2] % 36 + 1) : Int.random(in: 1...36)
-        let submsgId = hexBytes.count > 3 ? Int(hexBytes[3] % 5 + 1) : Int.random(in: 1...5)
-
-        let msg = GalileoINavMessage(
-            svid: svid,
-            submessageId: submsgId,
-            data: rawData.count >= 30 ? rawData : Data((0..<30).map { _ in UInt8.random(in: 0...255) }),
-            status: 0,
-            timestamp: Date()
-        )
-
-        if viewModel?.messages.count ?? 0 >= 100 {
-            viewModel?.messages.removeFirst()
-        }
-        viewModel?.messages.append(msg)
     }
 
     private func parseNmeaCoord(_ rawVal: String, dir: String) -> Double? {

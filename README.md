@@ -6,17 +6,21 @@ TRISAT is an advanced **multiplatform GNSS intelligence application** (Android, 
 
 ![TRISAT Banner](trisat_android/src/main/res/drawable/trisat_logo.png)
 
+## Data provenance
+
+Android and the Apple apps show received Galileo I/NAV as unverified. The SDR navigation and positioning output is simulated, including when an IQ file is used as an input. The OSNMA self-test checks a fixed reference vector and is shown separately from the session status.
+
 ## 🌐 Multiplatform Architecture
 
 TRISAT is built as a cross-ecosystem solution with native, high-performance implementations for iOS, macOS, Android, and embedded telemetry bridges:
 
 | Platform / Module | Directory | Tech Stack | Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **iOS / iPadOS** | `trisat_ios/` | Swift, SwiftUI, CoreLocation, CoreBluetooth, MapKit, CryptoKit | 3-mode operation (Internal TLE, BLE Nordic UART, UDP Simulator), Galileo OSNMA verification, CelesTrak 24h orbit propagator |
+| **iOS / iPadOS** | `trisat_ios/` | Swift, SwiftUI, CoreLocation, CoreBluetooth, MapKit, CryptoKit | 3-mode operation (Internal TLE, BLE Nordic UART, UDP Simulator), Galileo I/NAV inspection, CelesTrak 24h orbit propagator |
 | **macOS** | `trisat_mac/` & `trisat_ios/` | Swift, SwiftUI, Network.framework, POSIX Serial, PyUSB | Native macOS desktop app, integrated **TRISAT-SDR (E1 OSNMA + E6 HAS-UA)** launcher, POSIX direct USB serial for u-blox & SXblue |
 | **Hardware Bridges** | `trisat_hw/` | Arduino / C++, Python 3, PyUSB, libusb | SparkFun u-blox ZED-F9P + ESP32 hybrid bridge (BLE NUS + WiFi UDP), Geneq SXblue USB daemon, u-blox USB-CDC bridge |
 | **Android** | `trisat_android/` | Kotlin, Jetpack Compose, Android GNSS HAL APIs | Raw `TYPE_GAL_I` I/NAV frames, AGC levels, RINEX logging, A-GNSS cold-start reset |
-| **SDR Engine** | `trisat_sdr/` | Python 3, NumPy/SciPy, Dual-HackRF (`10 MHz CLKOUT/CLKIN`) | Portable SDR receiver (`E1B/C`, `E5a`, `E5b`, `E5 AltBOC`, `E6B/C HAS`, `GPS L1`), **OSNMA v1.1**, **HAS-UA (`PPPSD`/`DIA`/`NTCM-G`)** & Web UI (`:8085`) |
+| **SDR Engine** | `trisat_sdr/` | Python 3, NumPy/SciPy, Dual-HackRF (`10 MHz CLKOUT/CLKIN`) | SDR simulator (`E1B/C`, `E5a`, `E5b`, `E5 AltBOC`, `E6B/C HAS`, `GPS L1`), **OSNMA v1.1**, **HAS-UA (`PPPSD`/`DIA`/`NTCM-G`)** & Web UI (`:8085`) |
 
 ---
 
@@ -28,7 +32,7 @@ TRISAT is built as a cross-ecosystem solution with native, high-performance impl
   * **Mode 0 (`🛰️ Internal + TLE`):** Uses iPhone / Mac internal CoreLocation coordinates with live CelesTrak SGP4 24-hour Keplerian orbit propagation ($\pm 12\text{h}$ slider). Raw RF telemetry and threat analysis views enter a clean Standby state.
   * **Mode 1 (`📡 Bluetooth`):** Direct wireless connection to the physical **TRISAT ESP32 Hybrid Bridge** via Nordic UART Service (NUS). Streams real-time NMEA sentences (`$GNGGA`, `$GAGSV`, `$GPGSV`) and paced Galileo I/NAV subframes (`$GALINAV`) without requiring Apple MFi licensing.
   * **Mode 2 (`🌐 UDP Telemetry / Simulator`):** In-process Swift telemetry generator and high-performance UDP receiver (`Network.framework` port 9090) for HackRF SDR streams or standalone testing.
-* 🔒 **Galileo I/NAV & OSNMA Subframe Decoder:** Real-time extraction, inspection, and verification of 240-bit Galileo I/NAV navigation subframes (`WT 1..6, 16, 17..20, 22, 44`) with CRC-24Q validation and quick "Clear" controls for both terminal and navigation cards.
+* 🔒 **Galileo I/NAV & OSNMA Subframe Decoder:** Capture and inspection of Galileo I/NAV navigation subframes (`WT 1..6, 16, 17..20, 22, 44`) with quick "Clear" controls for both terminal and navigation cards.
 * 🛡️ **Interactive Threat Analysis & Anti-Spoofing:** Dynamic RF health scoring (0–100%) with real-time attack simulation for broadband Jamming, coherent Spoofing, Meaconing (replay delay), and OSNMA MAC tampering.
 * 🗺️ **Embedded Geospatial Mini Map:** Live interactive MapKit view displaying real-time coordinate position marked `GNSS LIVE`.
 

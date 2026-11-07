@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Run a fixed number of epochs and exit (0 = run continuously)",
     )
+    parser.add_argument(
+        "--emit-legacy-simulation",
+        action="store_true",
+        help="Also emit simulated legacy NMEA and navigation frames for a dedicated test client",
+    )
     return parser.parse_args()
 
 
@@ -88,6 +93,7 @@ def print_banner(snap: dict, web_url: str = "") -> None:
     print("=" * 78)
     print(" 🛰️  TRISAT-SDR | Software-Defined Multi-Band GNSS Receiver (v1.0.0)")
     print("    Portable Engine: macOS · GNU/Linux · Windows")
+    print(f"    Data source: {snap['source'].upper()}")
     print("=" * 78)
     print(f" [SDR #0 MASTER] {p0['label']}")
     print(f"    Band: {p0['band_name']} ({p0['center_freq_mhz']} MHz) |Fs: {p0['sample_rate_msps']} MS/s | Bias-T: ON | CLKOUT: 10MHz")
@@ -117,6 +123,8 @@ def main() -> int:
     cfg.telemetry.udp_host = args.udp_host
     cfg.telemetry.udp_port = args.udp_port
     cfg.telemetry.tcp_port = args.tcp_port
+    cfg.telemetry.emit_nmea = args.emit_legacy_simulation
+    cfg.telemetry.emit_galinav_raw = args.emit_legacy_simulation
     cfg.web_ui_port = args.web_port
 
     receiver = TrisatSdrReceiver(cfg)
@@ -142,12 +150,12 @@ def main() -> int:
 
             line = (
                 f"[Epoch {snap['epoch']:04d}] Mode: {pvt['solution_mode']} | "
-                f"Pos: ({pvt['latitude_deg']:.6f}, {pvt['longitude_deg']:.6f}) ±{pvt['horizontal_accuracy_m']:.2f}m | "
-                f"Sats: {pvt['num_sats_used']} (OSNMA:{pvt['osnma_authenticated_sats']} HAS:{pvt['has_corrected_sats']})"
+                f"Demo position: ({pvt['latitude_deg']:.6f}, {pvt['longitude_deg']:.6f}) ±{pvt['horizontal_accuracy_m']:.2f}m | "
+                f"Demo satellites: {pvt['num_sats_used']} | OSNMA: simulated"
             )
             print(line)
             if latest_frm:
-                print(f"   ↳ TX Frame: {latest_frm['nmea_custom_sentence'][:76]}...")
+                print(f"   ↳ Demo frame: {latest_frm['nmea_custom_sentence'][:76]}...")
 
             if target_epochs > 0 and snap["epoch"] >= target_epochs:
                 break

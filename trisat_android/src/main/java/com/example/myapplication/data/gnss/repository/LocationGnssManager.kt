@@ -281,7 +281,7 @@ class LocationGnssManager(private val context: Context) {
                 _positionHistory.value = (_positionHistory.value + locData).takeLast(200)
                 reevaluateTrust(newLocation = locData)
 
-                if (bleServer.isServerActive) {
+                if (bleServer.isServerActive && !locData.isMock) {
                     bleServer.broadcastLocation(locData)
                 }
             }
@@ -376,9 +376,6 @@ class LocationGnssManager(private val context: Context) {
         _gnssStatusData.value = status
         reevaluateTrust(newStatus = status)
 
-        if (bleServer.isServerActive) {
-            bleServer.broadcastSatStatus(sats)
-        }
     }
 
     private fun propagateTleFallback() {
@@ -408,8 +405,10 @@ class LocationGnssManager(private val context: Context) {
             osnmaEngine.verifyOsnma(_inavMessages.value)
         } else null
 
-        val osnmaOverride = if (_activeScenario.value == ThreatScenario.OSNMA_FAILURE) {
-            OsnmaStatus.FAILED
+        val osnmaOverride = if (_receiverMode.value == GnssReceiverMode.SIMULATION_TLE &&
+            _activeScenario.value == ThreatScenario.OSNMA_FAILURE
+        ) {
+            OsnmaStatus.SIMULATED_FAILURE
         } else realOsnmaStatus
 
         val report = trustScoringEngine.evaluateTrust(
@@ -522,6 +521,7 @@ class LocationGnssManager(private val context: Context) {
 
     private val gnssNavigationCallback = object : GnssNavigationMessage.Callback() {
         override fun onGnssNavigationMessageReceived(event: GnssNavigationMessage) {
+            if (_receiverMode.value != GnssReceiverMode.INTERNAL_TLE) return
             lastHardwareEventTime = System.currentTimeMillis()
             if (event.type == GnssNavigationMessage.TYPE_GAL_I) {
                 _hasInavSupport.value = true

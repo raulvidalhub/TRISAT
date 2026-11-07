@@ -93,6 +93,17 @@ class GnssViewModel: ObservableObject {
 
     // Live Unfiltered Satellites from External Bridge / Hardware
     var liveBridgeSatellites: [SatelliteInfo] = []
+    @Published var isSimulatedTelemetry = false
+
+    var skySourceLabel: String {
+        if selectedMode == 0 || (selectedMode == 2 && liveBridgeSatellites.isEmpty && !isSimulatedTelemetry) {
+            return "PREDICTED SKY"
+        }
+        if selectedMode == 2 && isSimulatedTelemetry {
+            return "SIMULATED SKY"
+        }
+        return liveBridgeSatellites.isEmpty ? "NO SATELLITE TELEMETRY" : "EXTERNAL TELEMETRY"
+    }
     private var satelliteStore: [String: (info: SatelliteInfo, lastSeen: Date)] = [:]
     var hasExternalHardwareFix: Bool = false
 
@@ -166,6 +177,7 @@ class GnssViewModel: ObservableObject {
 
     func resetHardwareTelemetry() {
         satelliteStore.removeAll()
+        isSimulatedTelemetry = false
         liveBridgeSatellites.removeAll()
         hasExternalHardwareFix = false
         displayedSatellites.removeAll()
@@ -218,8 +230,9 @@ class GnssViewModel: ObservableObject {
         // Add subtle, realistic receiver tracking variation (±0.3 dB-Hz jitter) so satellites look tracked and alive
         let jitteredSats: [SatelliteInfo] = filteredSats.enumerated().map { idx, sat in
             let jitter = ((idx + trackingTickCount) % 3 == 0) ? 1 : (((idx + trackingTickCount) % 5 == 0) ? -1 : 0)
-            let currentCno = sat.cno > 0 ? max(20, min(50, sat.cno + jitter)) : 0
-            let currentCnoSecondary = sat.cnoSecondary > 0 ? max(20, min(50, sat.cnoSecondary + jitter)) : 0
+            let useJitter = selectedMode == 0 || liveBridgeSatellites.isEmpty || isSimulatedTelemetry
+            let currentCno = useJitter && sat.cno > 0 ? max(20, min(50, sat.cno + jitter)) : sat.cno
+            let currentCnoSecondary = useJitter && sat.cnoSecondary > 0 ? max(20, min(50, sat.cnoSecondary + jitter)) : sat.cnoSecondary
             return SatelliteInfo(
                 id: sat.id,
                 svid: sat.svid,
@@ -595,23 +608,15 @@ class GnssViewModel: ObservableObject {
 
     func parseGalinavSentence(_ line: String) {
         let parts = line.components(separatedBy: ",")
-        guard parts.count >= 4 else { return }
-        let svid = Int(parts[1]) ?? 1
-        let wt = Int(parts[2]) ?? 1
-        let hexClean = parts[3].components(separatedBy: "*")[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        var rawBytes = [UInt8]()
-        var sIndex = hexClean.startIndex
-        while sIndex < hexClean.endIndex {
-            let eIndex = hexClean.index(sIndex, offsetBy: 2, limitedBy: hexClean.endIndex) ?? hexClean.endIndex
-            if let b = UInt8(hexClean[sIndex..<eIndex], radix: 16) {
-                rawBytes.append(b)
-            }
-            sIndex = eIndex
-        }
+        guard parts.count >= 4,
+              let svid = Int(parts[1]), (1...36).contains(svid),
+              let wt = Int(parts[2]),
+              let payload = GalileoINavMessage.decodeHexPayload(parts[3].components(separatedBy: "*")[0])
+        else { return }
         let inavMsg = GalileoINavMessage(
             svid: svid,
             submessageId: wt,
-            data: Data(rawBytes.isEmpty ? (0..<30).map { _ in UInt8.random(in: 0...255) } : rawBytes),
+            data: payload,
             status: 0,
             timestamp: Date(),
             band: "E1-B"

@@ -151,7 +151,7 @@ fun DashboardScreen(
                             }
                         ) {
                             Text(
-                                text = receiverMode.badge,
+                                text = if (gnssStatus.isMock) "SIMULATED SKY VIEW" else receiverMode.badge,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
@@ -172,7 +172,11 @@ fun DashboardScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Galileo OSNMA v1.1 • E6 HAS-UA v2.0 • 4-Constellation CelesTrak SGP4",
+                        text = when {
+                            !locationData.hasFix -> "Position: no fix"
+                            locationData.isMock -> "Position: simulated"
+                            else -> "Position: reported by device"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

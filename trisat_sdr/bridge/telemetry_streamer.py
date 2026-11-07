@@ -50,7 +50,8 @@ def format_gngga_sentence(pvt: PvtSolution) -> str:
     utc_str = time.strftime("%H%M%S.00", time.gmtime())
     lat_str, lat_dir = _decimal_to_nmea_coord(pvt.latitude_deg, is_lat=True)
     lon_str, lon_dir = _decimal_to_nmea_coord(pvt.longitude_deg, is_lat=False)
-    fix_qual = 4 if "HAS" in pvt.solution_mode else (1 if pvt.valid_fix else 0)
+    # PVT is simulated. Legacy NMEA must not report a real fix.
+    fix_qual = 0
     body = (
         f"GNGGA,{utc_str},{lat_str},{lat_dir},{lon_str},{lon_dir},"
         f"{fix_qual},{pvt.num_sats_used:02d},{pvt.hdop:.1f},{pvt.altitude_m:.1f},M,48.0,M,,"
@@ -213,6 +214,7 @@ class TelemetryStreamer:
             # Compatible with TrisatBleServer.kt / BluetoothManager.swift JSON schema
             json_packet = {
                 "type": "inav_frame" if frame.band_id == "GAL_E1" else "gnss_frame",
+                "source": "simulated",
                 "band": frame.band_id,
                 "const": frame.constellation,
                 "svid": frame.svid,
@@ -236,6 +238,7 @@ class TelemetryStreamer:
         if self.config.emit_trisat_json:
             loc_json = {
                 "type": "location",
+                "source": "simulated",
                 "mode": pvt.solution_mode,
                 "lat": pvt.latitude_deg,
                 "lon": pvt.longitude_deg,
@@ -262,7 +265,7 @@ class TelemetryStreamer:
                 }
                 for s in pvt.satellites
             ]
-            self._broadcast_line(json.dumps({"type": "sat_status", "satellites": sats_array}))
+            self._broadcast_line(json.dumps({"type": "sat_status", "source": "simulated", "satellites": sats_array}))
 
     @property
     def connected_tcp_clients_count(self) -> int:
