@@ -9,9 +9,6 @@ import json
 import threading
 from urllib.parse import parse_qs, urlparse
 
-from ..receiver import TrisatSdrReceiver
-
-
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -143,10 +140,43 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     overflow-x: auto;
     white-space: nowrap;
   }
+  #live-dashboard { display: none; }
+  .live-sbf #live-dashboard { display: block; }
+  .live-sbf #sdr-dashboard { display: none; }
+  .live-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .live-table th, .live-table td { padding: .4rem; border-bottom: 1px solid #1e293b; text-align: left; }
 </style>
 </head>
 <body>
 
+<div id="live-dashboard">
+  <header>
+    <div class="title-block">
+      <h1>TRISAT-SDR — Mosaic-H</h1>
+      <p>Receiver data via Septentrio USB · Local SBF recording</p>
+    </div>
+    <span class="badge badge-cyan" id="live-state" role="status">WAITING FOR RECEIVER DATA</span>
+  </header>
+  <div class="grid-2">
+    <section class="card" aria-labelledby="live-position-title">
+      <h2 id="live-position-title">Receiver-reported position</h2>
+      <div class="kv-row"><span>Position solution</span><span id="live-fix">—</span></div>
+      <div class="kv-row"><span>Latitude / Longitude</span><span id="live-position">—</span></div>
+      <div class="kv-row"><span>Ellipsoidal height</span><span id="live-height">—</span></div>
+      <div class="kv-row"><span>Coordinate datum</span><span id="live-datum">—</span></div>
+      <div class="kv-row"><span>Receiver timestamp</span><span id="live-position-time">—</span></div>
+    </section>
+    <section class="card" aria-labelledby="live-signals-title">
+      <h2 id="live-signals-title">Galileo signal quality</h2>
+      <div class="kv-row"><span>C/N₀ (dB-Hz)</span><span id="live-signals-time">—</span></div>
+      <table class="live-table" aria-label="Live Galileo C/N₀ measurements">
+        <thead><tr><th>Satellite</th><th>Band</th><th>Main</th><th>Aux1</th></tr></thead>
+        <tbody id="live-signals"></tbody>
+      </table>
+    </section>
+  </div>
+</div>
+<div id="sdr-dashboard">
 <header>
   <div class="title-block">
     <h1>🛰️ TRISAT-SDR — Multi-Band GNSS Software Receiver</h1>
@@ -303,6 +333,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+</div>
 <script>
 async function switchSecondaryBand() {
   const band = document.getElementById('bandSelect').value;
@@ -385,10 +416,53 @@ function drawCorrelatorAndIQ(ch) {
   }
 }
 
+function showLiveReceiver(data) {
+  const set = (id, value) => { document.getElementById(id).textContent = value; };
+  const time = sample => sample ? 'GPS week ' + sample.gps_week + ' · TOW ' +
+    (sample.tow_ms / 1000).toFixed(3) + ' s' : '—';
+  const states = {
+    receiving: 'MOSAIC-H LIVE', waiting: 'WAITING FOR RECEIVER DATA',
+    stale: 'NO RECENT RECEIVER DATA', disconnected: 'RECEIVER DASHBOARD DISCONNECTED'
+  };
+  set('live-state', states[data.stream_state]);
+  const position = data.receiver_position;
+  let fix = position?.solution.replaceAll('_', ' ') ?? '—';
+  if (position?.dimensions) fix += ' · ' + position.dimensions + 'D';
+  if (position?.error_code) fix += ' (receiver error ' + position.error_code + ')';
+  set('live-fix', fix);
+  set('live-position', position?.latitude_deg == null ? '—' :
+    position.latitude_deg.toFixed(6) + '°, ' + position.longitude_deg.toFixed(6) + '°');
+  set('live-height', position?.ellipsoidal_height_m == null ? '—' :
+    position.ellipsoidal_height_m.toFixed(2) + ' m');
+  const datum = position?.datum_code;
+  set('live-datum', datum == null ? '—' : datum === 0 ? 'WGS84/ITRS' : 'SBF datum ' + datum);
+  set('live-position-time', time(position));
+
+  const quality = data.galileo_signal_quality;
+  let qualityTime = time(quality);
+  if (quality?.scrambled) qualityTime += ' · Receiver marked measurements as scrambled';
+  set('live-signals-time', qualityTime);
+  const rows = (quality?.signals ?? []).map(signal => {
+    const row = document.createElement('tr');
+    const satellite = 'E' + String(signal.svid).padStart(2, '0');
+    const values = [satellite, signal.band, signal.cn0_dbhz.main?.toFixed(2) ?? '—',
+      signal.cn0_dbhz.aux1?.toFixed(2) ?? '—'];
+    for (const value of values) row.insertCell().textContent = value;
+    return row;
+  });
+  document.getElementById('live-signals').replaceChildren(...rows);
+}
+
 async function pollStatus() {
+  const live = document.body.classList.contains('live-sbf');
   try {
     const res = await fetch('/api/status');
+    if (!res.ok) throw new Error('Dashboard status unavailable');
     const data = await res.json();
+    if (live) {
+      showLiveReceiver(data);
+      return;
+    }
 
     document.getElementById('epochBadge').textContent = 'EPOCH ' + data.epoch;
 
@@ -491,7 +565,9 @@ async function pollStatus() {
       document.getElementById('srvEwss').textContent = ew.message_type + ' | ' + ew.severity + ' (' + ew.semi_major_km + 'x' + ew.semi_minor_km + 'km)';
       document.getElementById('srvEwssHex').textContent = 'CAMF 122b: ' + ew.camf_122bit_hex + ' [InZone: ' + ew.receiver_inside_alert_zone + ']';
     }
-  } catch (e) {}
+  } catch (e) {
+    if (live) showLiveReceiver({stream_state: 'disconnected'});
+  }
 }
 
 setInterval(pollStatus, 600);
@@ -509,38 +585,61 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 class TrisatWebDashboardServer:
     """Embedded HTTP Server serving the TRISAT-SDR Dashboard and JSON API."""
 
-    def __init__(self, receiver: TrisatSdrReceiver, host: str = "127.0.0.1", port: int = 8085):
+    def __init__(self, receiver, host: str = "127.0.0.1", port: int = 8085, *, live_sbf=False):
         self.receiver = receiver
-        self.host = host
+        self.host = "127.0.0.1" if live_sbf else host
         self.port = port
+        self.live_sbf = live_sbf
         self._httpd: ThreadingHTTPServer = None  # type: ignore
         self._mirror_httpd: ThreadingHTTPServer = None  # type: ignore
 
     def start(self, background: bool = True) -> str:
         receiver_ref = self.receiver
+        live_sbf = self.live_sbf
+        page = DASHBOARD_HTML
+        if live_sbf:
+            page = page.replace("<body>", '<body class="live-sbf">', 1)
+            page = page.replace(
+                "<title>TRISAT-SDR | Dual-HackRF Multi-Band GNSS Software Receiver</title>",
+                "<title>TRISAT-SDR | Mosaic-H live</title>",
+                1,
+            )
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args) -> None:
                 pass  # Suppress noisy console access logs
 
             def do_GET(self):
+                if live_sbf:
+                    host = self.headers.get("Host", "").partition(":")[0].lower()
+                    if host not in ("127.0.0.1", "localhost"):
+                        self.send_error(403)
+                        return
                 parsed = urlparse(self.path)
                 if parsed.path == "/api/status":
                     snap = receiver_ref.get_status_snapshot()
                     body = json.dumps(snap).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    if live_sbf:
+                        self.send_header("Cache-Control", "no-store")
+                    else:
+                        self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     self.wfile.write(body)
-                else:
-                    body = DASHBOARD_HTML.encode("utf-8")
+                elif not live_sbf or parsed.path == "/":
+                    body = page.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.end_headers()
                     self.wfile.write(body)
+                else:
+                    self.send_error(404)
 
             def do_POST(self):
+                if live_sbf:
+                    self.send_error(405)
+                    return
                 parsed = urlparse(self.path)
                 if parsed.path == "/api/set_band":
                     qs = parse_qs(parsed.query)
@@ -555,22 +654,27 @@ class TrisatWebDashboardServer:
                     self.end_headers()
 
         self._httpd = ReusableThreadingHTTPServer((self.host, self.port), Handler)
-        # Also mirror on port 8080 if primary port is 8085 (or vice versa) so both URLs work
         mirror_port = 8080 if self.port != 8080 else 8085
-        try:
-            self._mirror_httpd = ReusableThreadingHTTPServer((self.host, mirror_port), Handler)
-            threading.Thread(target=self._mirror_httpd.serve_forever, daemon=True).start()
-        except OSError:
-            self._mirror_httpd = None
+        if not live_sbf:
+            # Also mirror on port 8080 if primary port is 8085 (or vice versa).
+            try:
+                self._mirror_httpd = ReusableThreadingHTTPServer((self.host, mirror_port), Handler)
+                threading.Thread(target=self._mirror_httpd.serve_forever, daemon=True).start()
+            except OSError:
+                self._mirror_httpd = None
 
         if background:
             threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
         else:
             self._httpd.serve_forever()
+        if live_sbf:
+            return f"http://{self.host}:{self._httpd.server_port}/"
         return f"http://{self.host}:{self.port} (and http://{self.host}:{mirror_port})"
 
     def stop(self) -> None:
         if self._httpd:
             self._httpd.shutdown()
+            self._httpd.server_close()
         if self._mirror_httpd:
             self._mirror_httpd.shutdown()
+            self._mirror_httpd.server_close()

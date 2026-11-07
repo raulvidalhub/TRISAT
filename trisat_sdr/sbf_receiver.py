@@ -104,22 +104,27 @@ def _position(block, timestamp):
     }
 
 
+def receiver_sample(kind, block, source="main"):
+    if len(block) < 16:
+        return None
+    tow_ms, week = struct.unpack_from("<IH", block, 8)
+    if week == 65535 or tow_ms >= WEEK_MS:
+        return None
+    timestamp = {"gps_week": week, "tow_ms": tow_ms}
+    if kind == ATT_EULER:
+        return _attitude(block, timestamp)
+    if kind == PVT_GEODETIC:
+        return _position(block, timestamp)
+    if kind == MEAS_EPOCH:
+        return signal_quality(block, timestamp)
+    if kind == AUX_ANT_POSITIONS:
+        return _baseline(block, timestamp, source)
+    return None
+
+
 def _read_samples(path, block_types, source):
     for kind, block in read_blocks(path, block_types):
-        if len(block) < 16:
-            continue
-        tow_ms, week = struct.unpack_from("<IH", block, 8)
-        if week == 65535 or tow_ms >= WEEK_MS:
-            continue
-        timestamp = {"gps_week": week, "tow_ms": tow_ms}
-        if kind == ATT_EULER:
-            sample = _attitude(block, timestamp)
-        elif kind == PVT_GEODETIC:
-            sample = _position(block, timestamp)
-        elif kind == MEAS_EPOCH:
-            sample = signal_quality(block, timestamp)
-        else:
-            sample = _baseline(block, timestamp, source)
+        sample = receiver_sample(kind, block, source)
         if sample is not None:
             yield kind, sample
 

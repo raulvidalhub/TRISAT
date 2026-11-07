@@ -90,3 +90,15 @@ For these recordings, `--jsonl` adds a `receiver_position` field with the matche
 If the main recording contains `MeasEpoch`, the viewer shows the receiver's Galileo C/N₀ in dB-Hz by satellite, band and antenna. The satellite selector also filters this table. For each page the viewer uses the most recent measurement epoch at or before that page, up to two seconds old. The table lists the bands present in that epoch and shows a dash for missing antenna values. A new epoch replaces the previous one, including when it has no usable measurements or the receiver marks it as scrambled.
 
 For these recordings, `--jsonl` adds `galileo_signal_quality`, with the full matched Galileo epoch or `null` when there is no recent epoch. Each signal has a `cn0_dbhz` object keyed by the available antennas (`main`, `aux1`, `aux2`).
+
+## Use a Mosaic-H over USB
+
+Install `pyserial` and configure the receiver to output `PVTGeodetic`, `MeasEpoch`, and `GALRawINAV` over its USB serial interface. The live dashboard reads the configured port and writes checksum-validated SBF blocks to a new local file. In RxControl or the receiver web interface, use an available output stream and the USB connection that corresponds to your COM port.
+
+```powershell
+python -m pip install pyserial
+python -m trisat_sdr.live_sbf --serial COM9 --capture session.sbf --seconds 30
+python -m trisat_sdr.replay_sbf session.sbf
+```
+
+Open the local URL printed by `live_sbf`. The panel displays receiver position and Galileo C/N₀ from the main and Aux1 antennas, with the GPS timestamp of each sample. Values expire two seconds after receipt. Use Ctrl+C to finish a capture without a time limit. Run the replay command after the recording closes. OSNMA tag verification is available during replay with trusted key material.
