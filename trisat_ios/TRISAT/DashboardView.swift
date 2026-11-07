@@ -259,8 +259,7 @@ struct DashboardView: View {
                         Image(systemName: "doc.on.doc")
                         Text("Copy Coords")
                     }
-                    .font(.caption)
-                    .fontWeight(.bold)
+                    .font(.caption.weight(.bold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .background(Color.blue)
@@ -284,8 +283,7 @@ struct DashboardView: View {
                         Image(systemName: "map")
                         Text("Apple Maps")
                     }
-                    .font(.caption)
-                    .fontWeight(.bold)
+                    .font(.caption.weight(.bold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .background(Color.gray.opacity(0.2))
