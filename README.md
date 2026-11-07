@@ -19,7 +19,7 @@ TRISAT is built as a cross-ecosystem solution with native, high-performance impl
 | **iOS / iPadOS** | `trisat_ios/` | Swift, SwiftUI, CoreLocation, CoreBluetooth, MapKit, CryptoKit | 3-mode operation (Internal TLE, BLE Nordic UART, UDP Simulator), Galileo I/NAV inspection, CelesTrak 24h orbit propagator |
 | **macOS** | `trisat_mac/` & `trisat_ios/` | Swift, SwiftUI, Network.framework, POSIX Serial, PyUSB | Native macOS desktop app, integrated **TRISAT-SDR (E1 OSNMA + E6 HAS-UA)** launcher, POSIX direct USB serial for u-blox & SXblue |
 | **Hardware Bridges** | `trisat_hw/` | Arduino / C++, Python 3, PyUSB, libusb | SparkFun u-blox ZED-F9P + ESP32 hybrid bridge (BLE NUS + WiFi UDP), Geneq SXblue USB daemon, u-blox USB-CDC bridge |
-| **Android** | `trisat_android/` | Kotlin, Jetpack Compose, Android GNSS HAL APIs | Raw `TYPE_GAL_I` I/NAV frames, AGC levels, RINEX logging, A-GNSS cold-start reset |
+| **Android** | `trisat_android/` | Kotlin, Jetpack Compose, Android GNSS HAL APIs | Raw `TYPE_GAL_I` I/NAV frames, AGC levels, A-GNSS cold-start reset |
 | **SDR Engine** | `trisat_sdr/` | Python 3, NumPy/SciPy, Dual-HackRF (`10 MHz CLKOUT/CLKIN`) | SDR simulator (`E1B/C`, `E5a`, `E5b`, `E5 AltBOC`, `E6B/C HAS`, `GPS L1`), **OSNMA v1.1**, **HAS-UA (`PPPSD`/`DIA`/`NTCM-G`)** & Web UI (`:8085`) |
 
 ---
