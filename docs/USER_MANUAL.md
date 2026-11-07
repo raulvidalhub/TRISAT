@@ -136,6 +136,12 @@ python3 trisat_hw/zed_f9p/f9p_bridge.py
 ```
 This script configures the u-blox ZED-F9P for high-rate NMEA and binary `UBX-RXM-SFRBX` output, forwarding all packets to UDP `:9090`.
 
+### Android external UDP diagnostics
+
+Connect Android to the bridge's network and select **Settings → External Receiver / UDP**. The listener opens port `9090` in this mode. The bridge can send one checksummed NMEA sentence per datagram to the phone's IP address or broadcast on the same subnet.
+
+The dashboard counts UDP datagrams and accepted NMEA sentences separately. **Receiving NMEA** means supported sentences such as GGA, RMC or GSV passed their checksums. **NMEA data stale** appears after five seconds without an accepted sentence. NMEA reception has unverified provenance. Trust evaluation stays pending because it requires raw GNSS measurements.
+
 ---
 
 ## 5. How to Test OSNMA on a Physical Device

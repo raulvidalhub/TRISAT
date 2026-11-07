@@ -34,6 +34,7 @@ class GnssViewModel(application: Application) : AndroidViewModel(application) {
     val activeScenarioState: StateFlow<ThreatScenario> = gnssManager.activeScenario
     val isMockMode: StateFlow<Boolean> = gnssManager.isMockMode
     val isMonitoringActive: StateFlow<Boolean> = gnssManager.isMonitoringActive
+    internal val externalUdpStatus = gnssManager.externalUdpStatus
     val permissionGranted: StateFlow<Boolean> = gnssManager.permissionGranted
     val isBleServerActive: StateFlow<Boolean> = gnssManager.isBleServerActive
 

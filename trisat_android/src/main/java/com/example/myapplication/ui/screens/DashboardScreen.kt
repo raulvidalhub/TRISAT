@@ -73,6 +73,7 @@ import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.ThreatType
 import com.example.myapplication.data.gnss.model.TrustLevel
 import com.example.myapplication.data.gnss.model.TrustSubScores
+import com.example.myapplication.ui.components.ExternalUdpStatusCard
 import com.example.myapplication.ui.components.LocationPermissionHandler
 import com.example.myapplication.ui.components.StatusBadge
 import com.example.myapplication.ui.components.StatusLevel
@@ -89,6 +90,7 @@ fun DashboardScreen(
     onNavigateToThreats: () -> Unit = {}
 ) {
     val receiverMode by gnssViewModel.receiverMode.collectAsState()
+    val externalUdpStatus by gnssViewModel.externalUdpStatus.collectAsState()
     val timeOffsetHours by gnssViewModel.timeOffsetHours.collectAsState()
     val trustReport by gnssViewModel.trustReportState.collectAsState()
     val gnssStatus by gnssViewModel.gnssStatusState.collectAsState()
@@ -185,7 +187,7 @@ fun DashboardScreen(
         }
 
         // Location Permission Banner
-        if (!permissionGranted && receiverMode != GnssReceiverMode.SIMULATION_TLE) {
+        if (!permissionGranted && receiverMode == GnssReceiverMode.INTERNAL_TLE) {
             item {
                 LocationPermissionHandler(
                     isPermissionGranted = permissionGranted,
@@ -199,6 +201,10 @@ fun DashboardScreen(
                     }
                 )
             }
+        }
+
+        if (receiverMode == GnssReceiverMode.EXTERNAL_HARDWARE) {
+            item { ExternalUdpStatusCard(externalUdpStatus) }
         }
 
         // TLE Simulation 24h Time Scrubbing Slider Card (Active in Mode 2)

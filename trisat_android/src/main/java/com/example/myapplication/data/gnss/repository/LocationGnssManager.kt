@@ -32,6 +32,9 @@ import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.TrustReport
 import com.example.myapplication.data.gnss.tle.Sgp4OrbitPropagator
 import com.example.myapplication.data.gnss.tle.TleDownloader
+import com.example.myapplication.data.gnss.udp.ExternalUdpMonitor
+import com.example.myapplication.data.gnss.udp.ExternalUdpStage
+import com.example.myapplication.data.gnss.udp.ExternalUdpStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -95,11 +98,16 @@ class LocationGnssManager(private val context: Context) {
     private val _isMonitoringActive = MutableStateFlow(false)
     val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
 
+    private val externalUdpMonitor = ExternalUdpMonitor(elapsedMillis = SystemClock::elapsedRealtime)
+    private val _externalUdpStatus = MutableStateFlow(ExternalUdpStatus())
+    internal val externalUdpStatus: StateFlow<ExternalUdpStatus> = _externalUdpStatus.asStateFlow()
+
     private val _permissionGranted = MutableStateFlow(false)
     val permissionGranted: StateFlow<Boolean> = _permissionGranted.asStateFlow()
 
     private var mockJob: Job? = null
     private var hardwareCheckJob: Job? = null
+    private var externalUdpJob: Job? = null
 
     val bleServer = com.example.myapplication.data.gnss.ble.TrisatBleServer(context)
 
@@ -316,6 +324,7 @@ class LocationGnssManager(private val context: Context) {
             _locationData.value = LocationData()
         }
         _receiverMode.value = mode
+        if (mode != GnssReceiverMode.EXTERNAL_HARDWARE) stopExternalUdp()
         when (mode) {
             GnssReceiverMode.INTERNAL_TLE -> {
                 stopMockStream()
@@ -335,6 +344,7 @@ class LocationGnssManager(private val context: Context) {
                 unregisterHardwareCallbacks()
                 stopMockStream()
                 _isMockMode.value = false
+                if (_isMonitoringActive.value) startExternalUdp()
             }
             GnssReceiverMode.SIMULATION_TLE -> {
                 unregisterHardwareCallbacks()
@@ -521,6 +531,11 @@ class LocationGnssManager(private val context: Context) {
         if (_isMonitoringActive.value) return
         _isMonitoringActive.value = true
 
+        if (_receiverMode.value == GnssReceiverMode.EXTERNAL_HARDWARE) {
+            startExternalUdp()
+            return
+        }
+
         val permissionOk = hasLocationPermission()
 
         if (!permissionOk || _receiverMode.value == GnssReceiverMode.SIMULATION_TLE) {
@@ -543,11 +558,26 @@ class LocationGnssManager(private val context: Context) {
         _isMonitoringActive.value = false
         unregisterHardwareCallbacks()
         stopMockStream()
+        stopExternalUdp()
         hardwareCheckJob?.cancel()
         handler.removeCallbacks(checkReceiverTrustExpiry)
         _gnssStatusData.value = GnssStatusData()
         _gnssMeasurementsData.value = GnssMeasurementsData()
         _trustReportData.value = TrustReport()
+    }
+
+    private fun startExternalUdp() {
+        if (externalUdpJob?.isActive == true) return
+        _externalUdpStatus.value = ExternalUdpStatus(ExternalUdpStage.STARTING)
+        externalUdpJob = scope.launch {
+            externalUdpMonitor.observe().collect { status -> _externalUdpStatus.value = status }
+        }
+    }
+
+    private fun stopExternalUdp() {
+        externalUdpJob?.cancel()
+        externalUdpJob = null
+        _externalUdpStatus.value = ExternalUdpStatus()
     }
 
     fun setForceMockMode(enabled: Boolean) {

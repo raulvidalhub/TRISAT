@@ -14,9 +14,9 @@ enum class GnssReceiverMode(
     ),
     EXTERNAL_HARDWARE(
         id = 1,
-        title = "External Receiver / Bluetooth",
-        badge = "EXTERNAL / BT",
-        subtitle = "External Bluetooth GNSS receiver (SXBlue/RTK) or local UDP bridge (:9090)"
+        title = "External Receiver / UDP",
+        badge = "EXTERNAL / UDP",
+        subtitle = "Listen for NMEA telemetry from a local bridge on UDP port 9090"
     ),
     SIMULATION_TLE(
         id = 2,
