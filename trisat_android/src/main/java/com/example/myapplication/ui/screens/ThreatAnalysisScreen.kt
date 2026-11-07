@@ -114,6 +114,10 @@ fun ThreatAnalysisScreen(
                     )
                 }
 
+                item {
+                    RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
+                }
+
                 if (gnssStatus.satellites.isNotEmpty()) {
                     item {
                         DopGeometryBreakdownCard(
@@ -189,6 +193,10 @@ fun ThreatAnalysisScreen(
             }
 
             item {
+                RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
+            }
+
+            item {
                 com.example.myapplication.ui.screens.EarthIntelligenceLocationCard(
                     location = locationData,
                     satelliteCount = gnssStatus.satelliteCount,
@@ -199,10 +207,6 @@ fun ThreatAnalysisScreen(
 
             item {
                 com.example.myapplication.ui.screens.Cn0BandDistributionCard(satellites = gnssStatus.satellites)
-            }
-
-            item {
-                com.example.myapplication.ui.screens.RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
             }
 
             if (trustLevel != null) {

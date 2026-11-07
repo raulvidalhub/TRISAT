@@ -394,12 +394,17 @@ class TrustScoringEngine {
         if (drift != null && abs(drift) > 100.0) {
             score -= 45f
             threats.add(ThreatType.CLOCK_DRIFT_ANOMALY)
-            warnings.add("Clock Drift Anomaly: Excessive drift rate (${String.format(Locale.US, "%.1f", drift)} ns/s) detected.")
+            val driftLabel = if (measurements.isMock) "Simulated Clock Drift Anomaly" else "Clock Drift Anomaly"
+            warnings.add("$driftLabel: Excessive drift rate (${String.format(Locale.US, "%.1f", drift)} ns/s) detected.")
             logs.add(
                 IntelligenceLogEntry(
                     severity = "ALERT",
                     tag = "CLOCK_MONITOR",
-                    message = "Clock drift exceeds receiver oscillator tolerance. Possible time-spoofing injection."
+                    message = if (measurements.isMock) {
+                        "Simulated clock drift exceeds the oscillator tolerance."
+                    } else {
+                        "Clock drift exceeds receiver oscillator tolerance. Possible time-spoofing injection."
+                    }
                 )
             )
         }
@@ -410,16 +415,21 @@ class TrustScoringEngine {
                 IntelligenceLogEntry(
                     severity = "WARNING",
                     tag = "CLOCK_MONITOR",
-                    message = "Hardware clock discontinuity count: $discontinuities."
+                    message = if (measurements.isMock) {
+                        "Simulated clock discontinuity count: $discontinuities."
+                    } else {
+                        "Hardware clock discontinuity count: $discontinuities."
+                    }
                 )
             )
         }
 
+        val clockLabel = if (measurements.isMock) "Simulated Clock Stability" else "Clock Stability"
         logs.add(
             IntelligenceLogEntry(
                 severity = "INFO",
                 tag = "CLOCK_EVAL",
-                message = "Clock Stability: Drift = ${if (drift != null) String.format(Locale.US, "%.1f", drift) else "N/A"} ns/s."
+                message = "$clockLabel: Drift = ${if (drift != null) String.format(Locale.US, "%.1f", drift) else "N/A"} ns/s."
             )
         )
 

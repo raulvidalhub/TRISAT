@@ -1069,10 +1069,12 @@ fun BandDistributionRow(band: FrequencyBandSummary) {
 
 @Composable
 fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
-    val avgAgc = gnssMeasurements.averageAgcDb
+    val avgAgc = gnssMeasurements.averageAgcDb.takeIf { gnssMeasurements.measurements.any { it.hasAgc } }
+    val hasRfInterference = avgAgc != null && avgAgc < -10.0
     val drift = gnssMeasurements.driftNanosPerSecond
     val bias = gnssMeasurements.biasNanos
     val discontinuity = gnssMeasurements.clockHardwareClockDiscontinuityCount
+    val hasClockSample = gnssMeasurements.clockTimeNanos != 0L || drift != null || bias != null
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1096,15 +1098,24 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Raw AGC & Hardware Clock Stream",
+                        text = if (gnssMeasurements.isMock) "Simulated Clock & AGC" else "Raw AGC & Hardware Clock Stream",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
                 StatusBadge(
-                    text = if (avgAgc < -10.0) "RF INTERFERENCE" else "NOMINAL AGC",
-                    level = if (avgAgc < -10.0) StatusLevel.ALERT else StatusLevel.SECURE
+                    text = when {
+                        gnssMeasurements.isMock -> "SIMULATED"
+                        avgAgc == null -> "AGC UNAVAILABLE"
+                        hasRfInterference -> "RF INTERFERENCE"
+                        else -> "NOMINAL AGC"
+                    },
+                    level = when {
+                        gnssMeasurements.isMock || avgAgc == null -> StatusLevel.INFO
+                        hasRfInterference -> StatusLevel.ALERT
+                        else -> StatusLevel.SECURE
+                    }
                 )
             }
 
@@ -1116,8 +1127,12 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
             ) {
                 RawMetricTile(
                     label = "Average AGC",
-                    value = "${String.format(Locale.US, "%.1f", avgAgc)} dB",
-                    subtitle = if (avgAgc < -10.0) "RF Suppression" else "Normal Gain",
+                    value = if (avgAgc != null) String.format(Locale.US, "%.1f dB", avgAgc) else "—",
+                    subtitle = when {
+                        avgAgc == null -> "Unavailable"
+                        hasRfInterference -> "RF Suppression"
+                        else -> "Normal Gain"
+                    },
                     icon = Icons.Rounded.Speed,
                     modifier = Modifier.weight(1f)
                 )
@@ -1126,8 +1141,12 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
 
                 RawMetricTile(
                     label = "Clock Drift",
-                    value = if (drift != null) "${String.format(Locale.US, "%.1f", drift)} ns/s" else "-12.4 ns/s",
-                    subtitle = if (drift != null && kotlin.math.abs(drift) > 100.0) "Drift Anomaly" else "Stable Rate",
+                    value = if (drift != null) String.format(Locale.US, "%.1f ns/s", drift) else "—",
+                    subtitle = when {
+                        drift == null -> "Unavailable"
+                        kotlin.math.abs(drift) > 100.0 -> "Drift Anomaly"
+                        else -> "Stable Rate"
+                    },
                     icon = Icons.Rounded.Timer,
                     modifier = Modifier.weight(1f)
                 )
@@ -1141,7 +1160,7 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
             ) {
                 RawMetricTile(
                     label = "Clock Bias",
-                    value = if (bias != null) "${String.format(Locale.US, "%.1f", bias)} ns" else "-45.2 ns",
+                    value = if (bias != null) String.format(Locale.US, "%.1f ns", bias) else "—",
                     subtitle = "Oscillator Offset",
                     icon = Icons.Rounded.SignalCellular4Bar,
                     modifier = Modifier.weight(1f)
@@ -1151,7 +1170,7 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
 
                 RawMetricTile(
                     label = "Discontinuities",
-                    value = "$discontinuity Counts",
+                    value = if (hasClockSample) "$discontinuity" else "—",
                     subtitle = "Clock Reset Events",
                     icon = Icons.Rounded.CheckCircle,
                     modifier = Modifier.weight(1f)

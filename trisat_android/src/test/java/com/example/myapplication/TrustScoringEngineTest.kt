@@ -96,6 +96,31 @@ class TrustScoringEngineTest {
     }
 
     @Test
+    fun testOrbitalDemoClockChangesTrustWithoutRawSatelliteMeasurements() = runBlocking {
+        val status = generator.createGnssStatusFlow().first()
+        val location = LocationData()
+        val nominalSample = generator.createClockSample(ThreatScenario.NOMINAL, status.timestampMillis)
+        val attackSample = generator.createClockSample(ThreatScenario.CLOCK_DRIFT_ATTACK, status.timestampMillis)
+
+        assertTrue(attackSample.isMock)
+        assertTrue(attackSample.measurements.isEmpty())
+        assertTrue(requireNotNull(attackSample.driftNanosPerSecond) in 381.0..389.0)
+        assertEquals(3, attackSample.hardwareClockDiscontinuityCount)
+        assertEquals(0, nominalSample.hardwareClockDiscontinuityCount)
+
+        val nominal = engine.evaluateTrust(status, nominalSample, location)
+        val attack = engine.evaluateTrust(status, attackSample, location)
+
+        assertEquals(TrustAssessmentSource.SIMULATION, attack.assessmentSource)
+        assertTrue(ThreatType.CLOCK_DRIFT_ANOMALY in attack.threatsDetected)
+        assertTrue(ThreatType.CLOCK_DRIFT_ANOMALY !in nominal.threatsDetected)
+        assertEquals(100f, nominal.subScores.clockStabilityScore, 0f)
+        assertEquals(35f, attack.subScores.clockStabilityScore, 0f)
+        assertEquals(6.5f, nominal.overallScore - attack.overallScore, 0.001f)
+        assertTrue(attack.intelligenceLogs.any { it.tag == "CLOCK_MONITOR" && it.message.startsWith("Simulated clock drift") })
+    }
+
+    @Test
     fun testOsnmaAuthenticationFailure() = runBlocking {
         generator.setScenario(ThreatScenario.NOMINAL)
         val status = generator.createGnssStatusFlow().first()

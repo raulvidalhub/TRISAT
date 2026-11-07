@@ -253,7 +253,11 @@ fun DashboardScreen(
         if (trustReport.threatsDetected.isNotEmpty()) {
             item {
                 Text(
-                    text = "Active Threats Detected (${trustReport.threatsDetected.size})",
+                    text = if (gnssStatus.isMock) {
+                        "Simulated Anomalies (${trustReport.threatsDetected.size})"
+                    } else {
+                        "Active Threats Detected (${trustReport.threatsDetected.size})"
+                    },
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(start = 4.dp)

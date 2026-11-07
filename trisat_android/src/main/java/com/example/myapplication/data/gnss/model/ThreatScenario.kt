@@ -18,7 +18,7 @@ enum class ThreatScenario(
     ),
     CLOCK_DRIFT_ATTACK(
         displayName = "Clock Drift & Manipulation",
-        description = "Clock drift rate jump (380 ns/s) and clock hardware discontinuity event."
+        description = "Simulated drift near 385 ns/s and three clock discontinuities."
     ),
     OSNMA_FAILURE(
         displayName = "Galileo OSNMA Auth Failure",

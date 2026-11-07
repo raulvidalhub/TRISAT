@@ -199,8 +199,8 @@ class LocationGnssManager(private val context: Context) {
             val clock = event.clock
             val clockTimeNanos = clock.timeNanos
             val discontinuity = clock.hardwareClockDiscontinuityCount
-            val biasNanos = if (clock.hasBiasNanos()) clock.biasNanos else 0.0
-            val driftNanosPerSecond = if (clock.hasDriftNanosPerSecond()) clock.driftNanosPerSecond else 0.0
+            val biasNanos = if (clock.hasBiasNanos()) clock.biasNanos else null
+            val driftNanosPerSecond = if (clock.hasDriftNanosPerSecond()) clock.driftNanosPerSecond else null
 
             val measurements = event.measurements
             val detailList = mutableListOf<GnssMeasurementDetail>()
@@ -298,7 +298,6 @@ class LocationGnssManager(private val context: Context) {
         if (_receiverMode.value == GnssReceiverMode.SIMULATION_TLE) {
             updateTleSimulation()
         }
-        reevaluateTrust()
     }
 
     fun setReceiverMode(mode: GnssReceiverMode) {
@@ -348,6 +347,8 @@ class LocationGnssManager(private val context: Context) {
     }
 
     fun updateTleSimulation() {
+        val isSimulationMode = _receiverMode.value == GnssReceiverMode.SIMULATION_TLE
+        val scenario = if (isSimulationMode) _activeScenario.value else ThreatScenario.NOMINAL
         val lat = if (_locationData.value.hasFix && _locationData.value.latitude != 0.0) _locationData.value.latitude else 40.4168
         val lon = if (_locationData.value.hasFix && _locationData.value.longitude != 0.0) _locationData.value.longitude else -3.7038
         var sats = Sgp4OrbitPropagator.propagateToSkyplot(
@@ -358,7 +359,7 @@ class LocationGnssManager(private val context: Context) {
         )
 
         // Apply Threat Scenario transformation on simulated satellites
-        when (_activeScenario.value) {
+        when (scenario) {
             ThreatScenario.SPOOFING_SIMULATOR -> {
                 sats = sats.map { it.copy(cn0DbHz = 48.5f) }
             }
@@ -373,9 +374,11 @@ class LocationGnssManager(private val context: Context) {
             isMock = true,
             timestampMillis = System.currentTimeMillis()
         )
+        if (isSimulationMode) {
+            _gnssMeasurementsData.value = mockGnssGenerator.createClockSample(scenario, status.timestampMillis)
+        }
         _gnssStatusData.value = status
         reevaluateTrust(newStatus = status)
-
     }
 
     private fun propagateTleFallback() {
