@@ -49,6 +49,18 @@ PAGE = """<!doctype html>
       <dt>Recorded page (234 bits)</dt><dd><code id="payload">—</code></dd>
     </dl>
   </section>
+  <section id="receiver-position" hidden aria-labelledby="position-title">
+    <h2 id="position-title">Receiver-reported position</h2>
+    <p>Recorded PVT solution from the receiver. OSNMA tag verification is shown separately.</p>
+    <dl>
+      <dt>Position solution</dt><dd id="position-solution"></dd>
+      <dt>Latitude</dt><dd id="latitude"></dd>
+      <dt>Longitude</dt><dd id="longitude"></dd>
+      <dt>Ellipsoidal height</dt><dd id="position-height"></dd>
+      <dt>Coordinate datum</dt><dd id="position-datum"></dd>
+      <dt>Position sample</dt><dd id="position-sample"></dd>
+    </dl>
+  </section>
   <section id="antenna-attitude" hidden aria-labelledby="antenna-title">
     <h2 id="antenna-title">Receiver attitude and antennas</h2>
     <dl>
@@ -110,10 +122,45 @@ PAGE = """<!doctype html>
     not_requested: 'Attitude disabled on receiver',
     unavailable: 'No solution'
   };
+  const positionLabels = {
+    standalone: 'Standalone',
+    differential: 'Differential',
+    fixed_location: 'Fixed location',
+    rtk_fixed: 'RTK fixed',
+    rtk_float: 'RTK float',
+    sbas: 'SBAS aided',
+    moving_base_rtk_fixed: 'Moving-base RTK fixed',
+    moving_base_rtk_float: 'Moving-base RTK float',
+    ppp: 'Precise point positioning (PPP)',
+    unavailable: 'No position solution',
+    unknown: 'Unknown position mode'
+  };
 
   function sampleTime(sample) {
     return 'GPS week ' + sample.gps_week + ' · TOW ' + (sample.tow_ms / 1000).toFixed(3) +
       ' s · ' + sample.age_ms + ' ms before this page';
+  }
+
+  function showPosition(sample) {
+    element('receiver-position').hidden = sample === undefined;
+    if (sample === undefined) return;
+    let solution = 'No recent sample';
+    if (sample) {
+      solution = positionLabels[sample.solution];
+      if (sample.error_code) solution += ' (receiver error ' + sample.error_code + ')';
+      if (sample.solution === 'unknown') solution += ' (' + sample.mode_code + ')';
+      if (sample.dimensions) solution += ' · ' + sample.dimensions + 'D';
+    }
+    const degrees = value => value == null ? '—' : value.toFixed(6) + '°';
+    const datum = sample?.datum_code;
+    element('position-solution').textContent = solution;
+    element('latitude').textContent = degrees(sample?.latitude_deg);
+    element('longitude').textContent = degrees(sample?.longitude_deg);
+    element('position-height').textContent = sample?.ellipsoidal_height_m == null ? '—' :
+      sample.ellipsoidal_height_m.toFixed(2) + ' m';
+    element('position-datum').textContent = datum == null ? '—' :
+      datum === 0 ? 'WGS84/ITRS' : 'SBF datum ' + datum;
+    element('position-sample').textContent = sample ? sampleTime(sample) : '—';
   }
 
   function showAttitude(motion) {
@@ -153,6 +200,7 @@ PAGE = """<!doctype html>
       element('payload').textContent = frame.payload_hex;
       showVerification(result.osnma_verification);
       showAttitude(result.antenna_attitude);
+      showPosition(result.receiver_position);
       jumpPage.max = total;
       jumpPage.value = index + 1;
       jumpPage.disabled = jumpSubmit.disabled = false;
@@ -205,7 +253,7 @@ PAGE = """<!doctype html>
 """
 
 
-def serve_replay(pages, port, verification=None, motion=None):
+def serve_replay(pages, port, verification=None, receiver=None):
     """Serve one selected capture over loopback."""
     by_satellite = {}
     for index, page in enumerate(pages):
@@ -258,8 +306,8 @@ def serve_replay(pages, port, verification=None, motion=None):
                 result = {"count": len(selected), "page": page, "delay_ms": delay_ms}
                 if verification is not None:
                     result["osnma_verification"] = verification.at(capture_index, page["svid"])
-                if motion is not None and motion.has_data:
-                    result["antenna_attitude"] = motion.at(page)
+                if receiver is not None:
+                    result.update(receiver.at(page))
                 self.respond_json(result)
             else:
                 self.respond_json({"error": "Not found"}, 404)

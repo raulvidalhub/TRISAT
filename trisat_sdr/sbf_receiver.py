@@ -1,4 +1,4 @@
-"""Receiver-reported attitude and Main–Aux1 separation in SBF recordings."""
+"""Receiver-reported position, attitude, and antenna separation in SBF recordings."""
 
 import math
 import struct
@@ -8,9 +8,21 @@ from .sbf import WEEK_MS, gps_time_ms, read_blocks
 
 ATT_EULER = 5938
 AUX_ANT_POSITIONS = 5942
+PVT_GEODETIC = 4007
 MAX_SAMPLE_AGE_MS = 2_000
 ATTITUDE_MODES = {1: "float", 2: "fixed", 3: "float", 4: "fixed"}
 BASELINE_MODES = {0: "fixed", 1: "float"}
+POSITION_MODES = {
+    1: "standalone",
+    2: "differential",
+    3: "fixed_location",
+    4: "rtk_fixed",
+    5: "rtk_float",
+    6: "sbas",
+    7: "moving_base_rtk_fixed",
+    8: "moving_base_rtk_float",
+    10: "ppp",
+}
 
 
 def _attitude(block, timestamp):
@@ -62,6 +74,35 @@ def _baseline(block, timestamp, source):
     return None
 
 
+def _position(block, timestamp):
+    if len(block) < 88:
+        return None
+    mode, error = block[14:16]
+    mode_code = mode & 0x0F
+    solution = "unavailable" if error or not mode_code else POSITION_MODES.get(mode_code, "unknown")
+    dimensions = (2 if mode & 0x80 else 3) if solution in POSITION_MODES.values() else None
+
+    latitude, longitude, height = struct.unpack_from("<ddd", block, 16)
+    valid_coordinates = (
+        dimensions is not None
+        and -math.pi / 2 <= latitude <= math.pi / 2
+        and -math.pi <= longitude <= math.pi
+    )
+    height_available = valid_coordinates and dimensions == 3 and math.isfinite(height) and height != -2e10
+    datum = block[73]
+    return {
+        **timestamp,
+        "solution": solution,
+        "mode_code": mode_code,
+        "error_code": error,
+        "dimensions": dimensions,
+        "latitude_deg": math.degrees(latitude) if valid_coordinates else None,
+        "longitude_deg": math.degrees(longitude) if valid_coordinates else None,
+        "ellipsoidal_height_m": height if height_available else None,
+        "datum_code": datum if valid_coordinates and datum != 255 else None,
+    }
+
+
 def _read_samples(path, block_types, source):
     for kind, block in read_blocks(path, block_types):
         if len(block) < 16:
@@ -70,35 +111,35 @@ def _read_samples(path, block_types, source):
         if week == 65535 or tow_ms >= WEEK_MS:
             continue
         timestamp = {"gps_week": week, "tow_ms": tow_ms}
-        sample = (
-            _attitude(block, timestamp) if kind == ATT_EULER
-            else _baseline(block, timestamp, source)
-        )
+        if kind == ATT_EULER:
+            sample = _attitude(block, timestamp)
+        elif kind == PVT_GEODETIC:
+            sample = _position(block, timestamp)
+        else:
+            sample = _baseline(block, timestamp, source)
         if sample is not None:
             yield kind, sample
 
 
-class AttitudeTimeline:
+class ReceiverTimeline:
     """Look up the latest fresh receiver samples at a playback timestamp."""
 
     def __init__(self, recording, baseline_file=None):
-        self._attitude = []
-        self._baseline = []
-        block_types = {ATT_EULER, AUX_ANT_POSITIONS} if baseline_file is None else {ATT_EULER}
+        self._samples = {ATT_EULER: [], AUX_ANT_POSITIONS: [], PVT_GEODETIC: []}
+        block_types = {ATT_EULER, PVT_GEODETIC}
+        if baseline_file is None:
+            block_types.add(AUX_ANT_POSITIONS)
         for kind, sample in _read_samples(recording, block_types, "main"):
-            (self._attitude if kind == ATT_EULER else self._baseline).append(sample)
+            self._samples[kind].append(sample)
         if baseline_file is not None:
-            self._baseline.extend(
+            baseline = self._samples[AUX_ANT_POSITIONS]
+            baseline.extend(
                 sample for _, sample in _read_samples(baseline_file, {AUX_ANT_POSITIONS}, "auxiliary")
             )
-            if not self._baseline:
+            if not baseline:
                 raise ValueError("The auxiliary recording contains no Main–Aux1 position samples.")
-        self._attitude.sort(key=gps_time_ms)
-        self._baseline.sort(key=gps_time_ms)
-
-    @property
-    def has_data(self):
-        return bool(self._attitude or self._baseline)
+        for samples in self._samples.values():
+            samples.sort(key=gps_time_ms)
 
     @staticmethod
     def _latest(samples, now):
@@ -112,7 +153,15 @@ class AttitudeTimeline:
 
     def at(self, page):
         now = gps_time_ms(page)
-        return {
-            "attitude": self._latest(self._attitude, now),
-            "baseline": self._latest(self._baseline, now),
-        }
+        telemetry = {}
+        attitude = self._samples[ATT_EULER]
+        baseline = self._samples[AUX_ANT_POSITIONS]
+        if attitude or baseline:
+            telemetry["antenna_attitude"] = {
+                "attitude": self._latest(attitude, now),
+                "baseline": self._latest(baseline, now),
+            }
+        position = self._samples[PVT_GEODETIC]
+        if position:
+            telemetry["receiver_position"] = self._latest(position, now)
+        return telemetry

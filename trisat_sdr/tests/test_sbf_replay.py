@@ -1,4 +1,5 @@
 import binascii
+import math
 import struct
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from pathlib import Path
 
 from trisat_sdr.osnma_replay import VerificationTimeline
 from trisat_sdr.replay_sbf import read_pages
-from trisat_sdr.sbf_attitude import AttitudeTimeline
+from trisat_sdr.sbf_receiver import ReceiverTimeline
 
 
 def sbf_block(block_id, body):
@@ -30,7 +31,14 @@ def aux_ant(tow, east=0.6, north=0, up=0.8, ambiguity=0, error=0, antenna=1):
     return sbf_block(5942, struct.pack("<IHBB", tow, 2443, 1, len(subblock)) + subblock)
 
 
-class TestAttitudeTimeline(unittest.TestCase):
+def pvt_geodetic(tow, latitude=47.25, longitude=19.125, height=150.0, mode=1, error=0, datum=0, revision=2):
+    body = bytearray(88 if revision >= 2 else 80)
+    struct.pack_into("<IHBBddd", body, 0, tow, 2443, mode, error, math.radians(latitude), math.radians(longitude), height)
+    body[65] = datum  # Offset 73 including the SBF header.
+    return sbf_block(4007 | (revision << 13), body)
+
+
+class TestReceiverTimeline(unittest.TestCase):
     def timeline(self, recording, auxiliary=None):
         with tempfile.TemporaryDirectory() as folder:
             main = Path(folder) / "test.sbf"
@@ -39,38 +47,76 @@ class TestAttitudeTimeline(unittest.TestCase):
             if auxiliary is not None:
                 baseline = Path(folder) / "auxiliary.sbf"
                 baseline.write_bytes(auxiliary)
-            return AttitudeTimeline(main, baseline)
+            return ReceiverTimeline(main, baseline)
 
     def test_uses_latest_recorded_attitude_without_filling_gaps(self):
         timeline = self.timeline(att_euler(2000, error=1) + att_euler(1000))
-        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 999})["attitude"])
-        fixed = timeline.at({"gps_week": 2443, "tow_ms": 1300})["attitude"]
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 999})["antenna_attitude"]["attitude"])
+        fixed = timeline.at({"gps_week": 2443, "tow_ms": 1300})["antenna_attitude"]["attitude"]
         self.assertEqual(fixed, {"gps_week": 2443, "tow_ms": 1000, "age_ms": 300,
                                  "heading_deg": 169.5, "pitch_deg": -1.5, "solution": "fixed"})
-        missing = timeline.at({"gps_week": 2443, "tow_ms": 4000})["attitude"]
+        missing = timeline.at({"gps_week": 2443, "tow_ms": 4000})["antenna_attitude"]["attitude"]
         self.assertEqual(missing["solution"], "insufficient_measurements")
         self.assertIsNone(missing["heading_deg"])
-        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 4001})["attitude"])
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 4001})["antenna_attitude"]["attitude"])
 
     def test_matches_across_gps_weeks(self):
         timeline = self.timeline(att_euler(604799000, mode=1))
-        sample = timeline.at({"gps_week": 2444, "tow_ms": 500})["attitude"]
+        sample = timeline.at({"gps_week": 2444, "tow_ms": 500})["antenna_attitude"]["attitude"]
         self.assertEqual((sample["solution"], sample["age_ms"]), ("float", 1500))
 
     def test_reads_baseline_in_either_recording_and_skips_invalid_values(self):
         time = {"gps_week": 2443, "tow_ms": 1000}
         main = att_euler(1000) + aux_ant(1000)
-        baseline = self.timeline(main).at(time)["baseline"]
+        baseline = self.timeline(main).at(time)["antenna_attitude"]["baseline"]
         self.assertEqual((baseline["distance_m"], baseline["source"]), (1.0, "main"))
-        auxiliary = aux_ant(1200, east=-2e10) + aux_ant(1100, ambiguity=1) + aux_ant(1000, antenna=2)
+        auxiliary = pvt_geodetic(1000) + aux_ant(1200, east=-2e10) + aux_ant(1100, ambiguity=1) + aux_ant(1000, antenna=2)
         timeline = self.timeline(main, auxiliary)
-        self.assertIsNone(timeline.at(time)["baseline"])
-        baseline = timeline.at({**time, "tow_ms": 1150})["baseline"]
+        self.assertNotIn("receiver_position", timeline.at(time))
+        self.assertIsNone(timeline.at(time)["antenna_attitude"]["baseline"])
+        baseline = timeline.at({**time, "tow_ms": 1150})["antenna_attitude"]["baseline"]
         self.assertEqual((baseline["distance_m"], baseline["solution"], baseline["source"]),
                          (1.0, "float", "auxiliary"))
-        self.assertIsNone(timeline.at({**time, "tow_ms": 1200})["baseline"]["distance_m"])
+        self.assertIsNone(timeline.at({**time, "tow_ms": 1200})["antenna_attitude"]["baseline"]["distance_m"])
         with self.assertRaisesRegex(ValueError, "no Main–Aux1 position samples"):
             self.timeline(main, aux_ant(1000, antenna=2))
+
+    def test_matches_position_by_timestamp_without_reusing_failed_fixes(self):
+        timeline = self.timeline(
+            att_euler(1000) + pvt_geodetic(2000, mode=0, error=1) + pvt_geodetic(1000, revision=0)
+        )
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 999})["receiver_position"])
+        data = timeline.at({"gps_week": 2443, "tow_ms": 1250})
+        sample = data["receiver_position"]
+        self.assertEqual(sample["tow_ms"], data["antenna_attitude"]["attitude"]["tow_ms"])
+        self.assertEqual((sample["solution"], sample["dimensions"], sample["age_ms"]), ("standalone", 3, 250))
+        self.assertAlmostEqual(sample["latitude_deg"], 47.25)
+        self.assertAlmostEqual(sample["longitude_deg"], 19.125)
+        self.assertEqual((sample["ellipsoidal_height_m"], sample["datum_code"]), (150.0, 0))
+        failed = timeline.at({"gps_week": 2443, "tow_ms": 2000})["receiver_position"]
+        self.assertEqual((failed["solution"], failed["error_code"]), ("unavailable", 1))
+        self.assertIsNone(failed["latitude_deg"])
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 4001})["receiver_position"])
+
+    def test_position_respects_two_dimensional_fixes_and_unusable_values(self):
+        timeline = self.timeline(
+            pvt_geodetic(1000, mode=0x84, datum=30)
+            + pvt_geodetic(2000, height=-2e10)
+            + pvt_geodetic(3000, latitude=float("nan"))
+            + pvt_geodetic(4000, mode=9)
+        )
+        sample = timeline.at({"gps_week": 2443, "tow_ms": 1000})["receiver_position"]
+        self.assertEqual((sample["solution"], sample["dimensions"], sample["datum_code"]), ("rtk_fixed", 2, 30))
+        self.assertIsNone(sample["ellipsoidal_height_m"])
+        self.assertAlmostEqual(sample["longitude_deg"], 19.125)
+        missing_height = timeline.at({"gps_week": 2443, "tow_ms": 2000})["receiver_position"]
+        self.assertIsNone(missing_height["ellipsoidal_height_m"])
+        self.assertIsNotNone(missing_height["latitude_deg"])
+        invalid = timeline.at({"gps_week": 2443, "tow_ms": 3000})["receiver_position"]
+        self.assertIsNone(invalid["longitude_deg"])
+        unknown = timeline.at({"gps_week": 2443, "tow_ms": 4000})["receiver_position"]
+        self.assertEqual((unknown["solution"], unknown["mode_code"]), ("unknown", 9))
+        self.assertIsNone(unknown["latitude_deg"])
 
 
 class TestSbfReplay(unittest.TestCase):

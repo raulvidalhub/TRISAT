@@ -78,3 +78,9 @@ python -m trisat_sdr.replay_sbf 'C:\path\to\recording.sbf' --baseline-file 'C:\p
 ```
 
 For each I/NAV page, the viewer uses the latest sample at or before the page's GPS timestamp, up to two seconds old. If no sample meets that condition, the viewer shows “No recent sample”. With `--jsonl`, the corresponding `antenna_attitude` object contains `attitude` and `baseline` entries, each of which can be `null`.
+
+### Optional receiver-reported position
+
+If the main recording includes `PVTGeodetic`, the viewer shows the receiver's latitude, longitude, ellipsoidal height, datum, and solution type. It uses the same two-second GPS timestamp window as the antenna measurements. A 2D fix displays latitude and longitude. A missing or invalid fix leaves the coordinates blank and shows the receiver error code when available.
+
+For these recordings, `--jsonl` adds a `receiver_position` field with the matched sample or `null` when there is no recent sample. The export can include the recorded coordinates.
