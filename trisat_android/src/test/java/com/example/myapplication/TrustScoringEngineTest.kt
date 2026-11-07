@@ -233,7 +233,7 @@ class TrustScoringEngineTest {
         ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
         assertEquals("INFO", nominal.severity)
         assertTrue(nominal.message.contains("No anomaly triggers detected."))
-        assertTrue(nominal.message.contains("Calculated trust level HIGH TRUST"))
+        assertTrue(nominal.message.contains("Simulated trust level HIGH TRUST"))
 
         generator.setScenario(ThreatScenario.SPOOFING_SIMULATOR)
         val spoofing = engine.evaluateTrust(
@@ -243,6 +243,6 @@ class TrustScoringEngineTest {
         ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
         assertEquals("ALERT", spoofing.severity)
         assertTrue(spoofing.message.contains("anomaly trigger(s) detected."))
-        assertTrue(spoofing.message.contains("Calculated trust level LOW TRUST"))
+        assertTrue(spoofing.message.contains("Simulated trust level LOW TRUST"))
     }
 }
