@@ -68,3 +68,20 @@ python -m trisat_sdr.replay_sbf 'C:\path\to\recording.sbf' --merkle-tree 'C:\pat
 ```
 
 Both XML files are required to enable verification. The viewer then shows verified-tag counts per target satellite, broken down by ADKD, as results become available in replay order. With `--jsonl`, the same result is included as `osnma_verification`. The verifier works offline and uses the capture timestamps. A verified tag applies to navigation data, while the CRC and position remain separate observations.
+
+### Reproduce the public OSNMA test
+
+The OSNMA replay workflow tests the [public example capture](https://github.com/Algafix/OSNMA/tree/25aa61de15ea0ffc0bf1bc62ff8214d5898e89e2/custom_run) on Windows and Linux. The test expects 50,277 Galileo pages and 4,711 verified tags across 12 satellites. The same pages with their OSNMA bits cleared must produce zero verified tags.
+
+To repeat the test from the TRISAT checkout in PowerShell with Python 3.12:
+
+```powershell
+git clone https://github.com/Algafix/OSNMA.git ../OSNMA
+git -C ../OSNMA checkout --detach 25aa61de15ea0ffc0bf1bc62ff8214d5898e89e2
+python -m pip install -r trisat_sdr/tests/requirements-osnma.txt
+$env:PYTHONPATH = (Resolve-Path ../OSNMA).Path
+$env:TRISAT_OSNMA_EXAMPLE = (Resolve-Path ../OSNMA/custom_run).Path
+python -m unittest discover -s trisat_sdr/tests -p test_osnma_public_capture.py -v
+```
+
+The standard SDR test suite skips this integration test when `TRISAT_OSNMA_EXAMPLE` is unset.
