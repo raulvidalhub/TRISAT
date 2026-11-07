@@ -302,6 +302,13 @@ class LocationGnssManager(private val context: Context) {
     }
 
     fun setReceiverMode(mode: GnssReceiverMode) {
+        if (_receiverMode.value != mode) {
+            _inavMessages.value = emptyList()
+            _hasInavSupport.value = false
+            _gnssStatusData.value = GnssStatusData()
+            _gnssMeasurementsData.value = GnssMeasurementsData()
+            _locationData.value = LocationData()
+        }
         _receiverMode.value = mode
         when (mode) {
             GnssReceiverMode.INTERNAL_TLE -> {
@@ -330,6 +337,7 @@ class LocationGnssManager(private val context: Context) {
                 updateTleSimulation()
             }
         }
+        reevaluateTrust()
     }
 
     fun setTimeOffsetHours(offset: Float) {
@@ -503,6 +511,9 @@ class LocationGnssManager(private val context: Context) {
         unregisterHardwareCallbacks()
         stopMockStream()
         hardwareCheckJob?.cancel()
+        _gnssStatusData.value = GnssStatusData()
+        _gnssMeasurementsData.value = GnssMeasurementsData()
+        _trustReportData.value = TrustReport()
     }
 
     fun setForceMockMode(enabled: Boolean) {

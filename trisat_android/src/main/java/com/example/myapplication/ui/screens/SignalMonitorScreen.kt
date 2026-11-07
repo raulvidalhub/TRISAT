@@ -128,7 +128,7 @@ fun SignalMonitorScreen(
                     HeaderStatsCard(
                         gnssStatus = gnssStatus,
                         filteredSatCount = filteredSatellites.size,
-                        estimatedHdop = trustReport.estimatedHdop,
+                        estimatedHdop = trustReport.estimatedHdop.takeIf { gnssStatus.satellites.isNotEmpty() },
                         isMockMode = isMockMode,
                         onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                     )
@@ -192,7 +192,7 @@ fun SignalMonitorScreen(
                 HeaderStatsCard(
                     gnssStatus = gnssStatus,
                     filteredSatCount = filteredSatellites.size,
-                    estimatedHdop = trustReport.estimatedHdop,
+                    estimatedHdop = trustReport.estimatedHdop.takeIf { gnssStatus.satellites.isNotEmpty() },
                     isMockMode = isMockMode,
                     onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                 )
@@ -254,7 +254,7 @@ fun SignalMonitorScreen(
 fun HeaderStatsCard(
     gnssStatus: GnssStatusData,
     filteredSatCount: Int,
-    estimatedHdop: Float,
+    estimatedHdop: Float?,
     isMockMode: Boolean,
     onToggleMockMode: (Boolean) -> Unit
 ) {
@@ -287,8 +287,9 @@ fun HeaderStatsCard(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val hdop = estimatedHdop?.let { String.format(Locale.US, "%.2f", it) } ?: "—"
                     Text(
-                        text = "Avg C/N0: ${String.format(Locale.US, "%.1f", gnssStatus.averageCn0DbHz)} dB-Hz • HDOP: ${String.format(Locale.US, "%.2f", estimatedHdop)}",
+                        text = "Avg C/N0: ${String.format(Locale.US, "%.1f", gnssStatus.averageCn0DbHz)} dB-Hz • HDOP: $hdop",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                         fontWeight = FontWeight.SemiBold
@@ -848,7 +849,7 @@ fun EarthIntelligenceLocationCard(
     location: com.example.myapplication.data.gnss.model.LocationData = com.example.myapplication.data.gnss.model.LocationData(),
     satelliteCount: Int,
     constellationCount: Int,
-    trustLevel: com.example.myapplication.data.gnss.model.TrustLevel = com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST
+    trustLevel: com.example.myapplication.data.gnss.model.TrustLevel?
 ) {
     val latStr = if (location.latitude >= 0) {
         String.format(Locale.US, "%.6f° N", location.latitude)
@@ -884,7 +885,7 @@ fun EarthIntelligenceLocationCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Authenticated Spatial Coordinates",
+                        text = "Position Coordinates",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -892,7 +893,12 @@ fun EarthIntelligenceLocationCard(
 
                 StatusBadge(
                     text = if (location.hasFix) "3D FIX LOCKED" else "NO FIX",
-                    level = if (trustLevel == com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST) StatusLevel.SECURE else StatusLevel.WARNING
+                    level = when {
+                        !location.hasFix -> StatusLevel.WARNING
+                        trustLevel == null -> StatusLevel.INFO
+                        trustLevel == com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST -> StatusLevel.SECURE
+                        else -> StatusLevel.WARNING
+                    }
                 )
             }
 

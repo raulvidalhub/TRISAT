@@ -1,7 +1,5 @@
 package com.example.myapplication.data.gnss.model
 
-import androidx.compose.ui.graphics.Color
-
 enum class TrustLevel(
     val displayName: String,
     val description: String,
@@ -10,19 +8,19 @@ enum class TrustLevel(
 ) {
     HIGH_TRUST(
         displayName = "HIGH TRUST",
-        description = "High Confidence - Multi-constellation verified & Cryptographically authenticated",
+        description = "The GNSS diagnostic score is in the high range.",
         minScore = 80.0f,
         maxScore = 100.0f
     ),
     MEDIUM_TRUST(
         displayName = "MEDIUM TRUST",
-        description = "Moderate Confidence - Minor signal degradation or unverified OSNMA signatures",
+        description = "The GNSS diagnostic score is in the medium range.",
         minScore = 50.0f,
         maxScore = 79.99f
     ),
     LOW_TRUST(
-        displayName = "LOW TRUST / THREAT DETECTED",
-        description = "High Risk - Active spoofing or severe RF jamming interference detected",
+        displayName = "LOW TRUST",
+        description = "The GNSS diagnostic score is in the low range. Review the measurements and alerts.",
         minScore = 0.0f,
         maxScore = 49.99f
     );

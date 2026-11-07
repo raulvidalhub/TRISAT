@@ -7,6 +7,7 @@ import com.example.myapplication.data.gnss.model.IntelligenceLogEntry
 import com.example.myapplication.data.gnss.model.LocationData
 import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.ThreatType
+import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
 import com.example.myapplication.data.gnss.model.TrustReport
 import com.example.myapplication.data.gnss.model.TrustSubScores
@@ -113,10 +114,17 @@ class TrustScoringEngine {
         val trustLevel = TrustLevel.fromScore(overallScore)
 
         val hasAnomalies = detectedThreats.isNotEmpty()
-        val hasMeasurements = gnssStatus.satellites.isNotEmpty() && gnssMeasurements.measurements.isNotEmpty()
+        val hasRawMeasurements = gnssMeasurements.measurements.isNotEmpty()
+        val assessmentSource = when {
+            gnssStatus.satellites.isEmpty() -> null
+            hasRawMeasurements && gnssStatus.isMock != gnssMeasurements.isMock -> null
+            gnssStatus.isMock -> TrustAssessmentSource.SIMULATION
+            hasRawMeasurements -> TrustAssessmentSource.RECEIVER
+            else -> null
+        }
         val severity = when {
             hasAnomalies && trustLevel == TrustLevel.LOW_TRUST -> "ALERT"
-            hasAnomalies || !hasMeasurements || warnings.isNotEmpty() || trustLevel != TrustLevel.HIGH_TRUST -> "WARNING"
+            hasAnomalies || assessmentSource == null || warnings.isNotEmpty() || trustLevel != TrustLevel.HIGH_TRUST -> "WARNING"
             else -> "INFO"
         }
         val anomalySummary = if (hasAnomalies) {
@@ -126,10 +134,10 @@ class TrustScoringEngine {
         }
         val score = String.format(Locale.US, "%.1f", overallScore)
         val level = trustLevel.name.replace('_', ' ')
-        val trustSummary = if (hasMeasurements) {
-            "Calculated trust level $level ($score%)."
-        } else {
-            "Insufficient GNSS data for a complete assessment. Provisional trust level $level ($score%)."
+        val trustSummary = when (assessmentSource) {
+            TrustAssessmentSource.RECEIVER -> "Calculated trust level $level ($score%)."
+            TrustAssessmentSource.SIMULATION -> "Simulated trust level $level ($score%)."
+            null -> "Insufficient GNSS data for a complete assessment. Provisional trust level $level ($score%)."
         }
         intelligenceLogs.add(
             IntelligenceLogEntry(
@@ -150,7 +158,8 @@ class TrustScoringEngine {
             estimatedVdop = dopResult.vdop,
             osnmaStatus = osnmaStatus,
             intelligenceLogs = intelligenceLogs,
-            timestampMillis = now
+            timestampMillis = now,
+            assessmentSource = assessmentSource
         )
     }
 

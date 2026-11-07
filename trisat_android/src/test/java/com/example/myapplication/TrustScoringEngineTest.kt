@@ -11,12 +11,15 @@ import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.SatelliteDetail
 import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.ThreatType
+import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
+import com.example.myapplication.data.gnss.model.TrustReport
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -162,6 +165,8 @@ class TrustScoringEngineTest {
 
         assertTrue(report.threatsDetected.isEmpty())
         assertEquals(TrustLevel.MEDIUM_TRUST, report.trustLevel)
+        assertEquals(TrustLevel.MEDIUM_TRUST, report.assessedTrustLevel)
+        assertEquals(TrustAssessmentSource.RECEIVER, report.assessmentSource)
         assertEquals("WARNING", log.severity)
         assertTrue(log.message.contains("No anomaly triggers detected."))
         assertTrue(log.message.contains("Calculated trust level MEDIUM TRUST"))
@@ -177,13 +182,40 @@ class TrustScoringEngineTest {
         val reports = listOf(
             engine.evaluateTrust(GnssStatusData(), GnssMeasurementsData(), location),
             engine.evaluateTrust(GnssStatusData(), measurements, location),
-            engine.evaluateTrust(status, GnssMeasurementsData(), location)
+            engine.evaluateTrust(status.copy(isMock = false), GnssMeasurementsData(), location)
         )
         for (report in reports) {
             val log = report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+            assertNull(report.assessedTrustLevel)
             assertEquals("WARNING", log.severity)
             assertTrue(log.message.contains("Insufficient GNSS data"))
             assertTrue(log.message.contains("Provisional trust level ${report.trustLevel.name.replace('_', ' ')}"))
+        }
+    }
+
+    @Test
+    fun testSimulatedSkyCanBeAssessedWithoutRawMeasurements() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val status = generator.createGnssStatusFlow().first()
+        val measurements = generator.createGnssMeasurementsFlow().first()
+        val location = LocationData()
+
+        assertNull(TrustReport().assessedTrustLevel)
+
+        for (rawInput in listOf(GnssMeasurementsData(), measurements)) {
+            val simulated = engine.evaluateTrust(status, rawInput, location)
+            assertEquals(TrustAssessmentSource.SIMULATION, simulated.assessmentSource)
+            assertEquals(simulated.trustLevel, simulated.assessedTrustLevel)
+            assertTrue(simulated.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }.message.contains("Simulated trust level"))
+        }
+
+        val mixedReports = listOf(
+            engine.evaluateTrust(status, measurements.copy(isMock = false), location),
+            engine.evaluateTrust(status.copy(isMock = false), measurements, location)
+        )
+        for (report in mixedReports) {
+            assertNull(report.assessedTrustLevel)
+            assertTrue(report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }.message.contains("Provisional trust level"))
         }
     }
 

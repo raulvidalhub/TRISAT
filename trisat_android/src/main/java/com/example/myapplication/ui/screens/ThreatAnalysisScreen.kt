@@ -56,6 +56,7 @@ import androidx.window.core.layout.WindowWidthSizeClass
 import com.example.myapplication.data.gnss.model.IntelligenceLogEntry
 import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.ThreatScenario
+import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
 import com.example.myapplication.data.gnss.model.TrustSubScores
 import com.example.myapplication.ui.components.StatusBadge
@@ -79,7 +80,8 @@ fun ThreatAnalysisScreen(
     val locationData by gnssViewModel.locationState.collectAsState()
     val gnssMeasurements by gnssViewModel.gnssMeasurementsState.collectAsState()
 
-    val trustLevel = trustReport.trustLevel
+    val trustLevel = trustReport.assessedTrustLevel
+    val isSimulatedAssessment = trustReport.assessmentSource == TrustAssessmentSource.SIMULATION
     val subScores = trustReport.subScores
     val threats = trustReport.threatsDetected
     val osnmaStatus = trustReport.osnmaStatus
@@ -105,25 +107,30 @@ fun ThreatAnalysisScreen(
                 item {
                     AntiSpoofingOverviewCard(
                         trustLevel = trustLevel,
+                        isSimulated = isSimulatedAssessment,
                         threatCount = threats.size,
                         activeScenario = activeScenario,
                         onSelectScenario = { scenario -> gnssViewModel.selectThreatScenario(scenario) }
                     )
                 }
 
-                item {
-                    DopGeometryBreakdownCard(
-                        hdop = trustReport.estimatedHdop,
-                        vdop = trustReport.estimatedVdop
-                    )
+                if (gnssStatus.satellites.isNotEmpty()) {
+                    item {
+                        DopGeometryBreakdownCard(
+                            hdop = trustReport.estimatedHdop,
+                            vdop = trustReport.estimatedVdop
+                        )
+                    }
                 }
 
                 item {
                     OsnmaAuthenticationCard(osnmaStatus = osnmaStatus)
                 }
 
-                item {
-                    SubScoresBreakdownCard(subScores = subScores)
+                if (trustLevel != null) {
+                    item {
+                        SubScoresBreakdownCard(subScores = subScores)
+                    }
                 }
             }
 
@@ -136,7 +143,11 @@ fun ThreatAnalysisScreen(
             ) {
                 item {
                     Text(
-                        text = "Real-Time Intelligence Threat Feed (${trustReport.intelligenceLogs.size} Events)",
+                        text = if (isSimulatedAssessment) {
+                            "Simulation Event Log (${trustReport.intelligenceLogs.size} Events)"
+                        } else {
+                            "Real-Time Intelligence Threat Feed (${trustReport.intelligenceLogs.size} Events)"
+                        },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -157,16 +168,20 @@ fun ThreatAnalysisScreen(
             contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item {
-                TrustabilityGaugeCard(
-                    score = trustReport.overallScore,
-                    trustLevel = trustLevel
-                )
+            if (trustLevel != null) {
+                item {
+                    TrustabilityGaugeCard(
+                        score = trustReport.overallScore,
+                        trustLevel = trustLevel,
+                        isSimulated = isSimulatedAssessment
+                    )
+                }
             }
 
             item {
                 AntiSpoofingOverviewCard(
                     trustLevel = trustLevel,
+                    isSimulated = isSimulatedAssessment,
                     threatCount = threats.size,
                     activeScenario = activeScenario,
                     onSelectScenario = { scenario -> gnssViewModel.selectThreatScenario(scenario) }
@@ -190,18 +205,20 @@ fun ThreatAnalysisScreen(
                 com.example.myapplication.ui.screens.RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
             }
 
-            item {
-                Text(
-                    text = "Weighted Diagnostic Sub-Scores",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-            }
+            if (trustLevel != null) {
+                item {
+                    Text(
+                        text = "Weighted Diagnostic Sub-Scores",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
 
-            item {
-                SubScoresBreakdownCard(subScores = subScores)
+                item {
+                    SubScoresBreakdownCard(subScores = subScores)
+                }
             }
 
             item {
@@ -214,11 +231,13 @@ fun ThreatAnalysisScreen(
                 )
             }
 
-            item {
-                DopGeometryBreakdownCard(
-                    hdop = trustReport.estimatedHdop,
-                    vdop = trustReport.estimatedVdop
-                )
+            if (gnssStatus.satellites.isNotEmpty()) {
+                item {
+                    DopGeometryBreakdownCard(
+                        hdop = trustReport.estimatedHdop,
+                        vdop = trustReport.estimatedVdop
+                    )
+                }
             }
 
             item {
@@ -227,7 +246,7 @@ fun ThreatAnalysisScreen(
 
             item {
                 Text(
-                    text = "Real-Time Threat Intelligence Event Logs",
+                    text = if (isSimulatedAssessment) "Simulation Event Log" else "Real-Time Threat Intelligence Event Logs",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -245,7 +264,8 @@ fun ThreatAnalysisScreen(
 @Composable
 fun TrustabilityGaugeCard(
     score: Float,
-    trustLevel: TrustLevel
+    trustLevel: TrustLevel,
+    isSimulated: Boolean
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -279,7 +299,7 @@ fun TrustabilityGaugeCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Trustability Overview",
+                        text = if (isSimulated) "Simulated Trustability" else "Trustability Overview",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -316,7 +336,8 @@ fun TrustabilityGaugeCard(
 
 @Composable
 fun AntiSpoofingOverviewCard(
-    trustLevel: TrustLevel,
+    trustLevel: TrustLevel?,
+    isSimulated: Boolean,
     threatCount: Int,
     activeScenario: ThreatScenario,
     onSelectScenario: (ThreatScenario) -> Unit
@@ -326,7 +347,7 @@ fun AntiSpoofingOverviewCard(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = when (trustLevel) {
-                TrustLevel.HIGH_TRUST -> MaterialTheme.colorScheme.surfaceContainer
+                null, TrustLevel.HIGH_TRUST -> MaterialTheme.colorScheme.surfaceContainer
                 TrustLevel.MEDIUM_TRUST -> MaterialTheme.colorScheme.surfaceContainerHigh
                 TrustLevel.LOW_TRUST -> MaterialTheme.colorScheme.errorContainer
             }
@@ -338,9 +359,14 @@ fun AntiSpoofingOverviewCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = if (trustLevel == TrustLevel.HIGH_TRUST) Icons.Rounded.GppGood else Icons.Rounded.GppBad,
+                    imageVector = when (trustLevel) {
+                        null -> Icons.Rounded.Shield
+                        TrustLevel.HIGH_TRUST -> Icons.Rounded.GppGood
+                        else -> Icons.Rounded.GppBad
+                    },
                     contentDescription = null,
                     tint = when (trustLevel) {
+                        null -> MaterialTheme.colorScheme.onSurfaceVariant
                         TrustLevel.HIGH_TRUST -> MaterialTheme.colorScheme.tertiary
                         TrustLevel.MEDIUM_TRUST -> MaterialTheme.colorScheme.secondary
                         TrustLevel.LOW_TRUST -> MaterialTheme.colorScheme.onErrorContainer
@@ -350,33 +376,44 @@ fun AntiSpoofingOverviewCard(
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (threatCount == 0) "Anti-Spoofing Status: SECURE" else "Threat Detected ($threatCount Active)",
+                        text = when {
+                            trustLevel == null -> "Evaluation pending"
+                            isSimulated -> "Simulated assessment"
+                            threatCount == 0 -> "No active anomalies"
+                            else -> "Anomalies detected ($threatCount)"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (trustLevel == TrustLevel.LOW_TRUST) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (threatCount == 0) "Cryptographic OSNMA verified. Multi-constellation power distribution nominal."
-                        else "Signal anomaly active in current environment.",
+                        text = when {
+                            trustLevel == null -> "Waiting for enough GNSS data to assess trust."
+                            isSimulated -> "Anomaly indicators in this simulation: $threatCount"
+                            threatCount == 0 -> "No anomaly indicators in the available measurements."
+                            else -> "Review the event log for details."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = if (trustLevel == TrustLevel.LOW_TRUST) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                StatusBadge(
-                    text = trustLevel.displayName,
-                    level = when (trustLevel) {
-                        TrustLevel.HIGH_TRUST -> StatusLevel.SECURE
-                        TrustLevel.MEDIUM_TRUST -> StatusLevel.WARNING
-                        TrustLevel.LOW_TRUST -> StatusLevel.ALERT
-                    }
-                )
+                if (trustLevel != null) {
+                    StatusBadge(
+                        text = trustLevel.displayName,
+                        level = when (trustLevel) {
+                            TrustLevel.HIGH_TRUST -> StatusLevel.SECURE
+                            TrustLevel.MEDIUM_TRUST -> StatusLevel.WARNING
+                            TrustLevel.LOW_TRUST -> StatusLevel.ALERT
+                        }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Interactive Threat Injection Scenario:",
+                text = "Simulated Threat Scenario",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = if (trustLevel == TrustLevel.LOW_TRUST) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.primary
