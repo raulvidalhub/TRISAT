@@ -230,8 +230,7 @@ struct SettingsView: View {
                         Image(systemName: "arrow.clockwise.icloud")
                         Text(viewModel.tleDownloader.isDownloading ? "Syncing..." : "Refresh TLEs")
                     }
-                    .font(.caption)
-                    .fontWeight(.bold)
+                    .font(.caption.weight(.bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Color.blue.opacity(0.2))
