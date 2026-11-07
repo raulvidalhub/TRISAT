@@ -6,7 +6,7 @@ import struct
 from pathlib import Path
 
 from .sbf import WEEK_MS, read_blocks
-from .sbf_attitude import AttitudeTimeline
+from .sbf_receiver import ReceiverTimeline
 
 GAL_RAW_INAV = 4023
 GAL_BANDS = {17: "E1-B", 21: "E5b-I"}
@@ -63,7 +63,7 @@ def main():
 
     try:
         pages = read_pages(args.file)
-        motion = AttitudeTimeline(args.file, args.baseline_file)
+        receiver = ReceiverTimeline(args.file, args.baseline_file)
         verification = None
         if args.merkle_tree is not None:
             from .osnma_replay import verify_recording
@@ -74,16 +74,14 @@ def main():
             for index, page in enumerate(pages):
                 if verification is not None:
                     page = {**page, "osnma_verification": verification.at(index, page["svid"])}
-                if motion.has_data:
-                    page = {**page, "antenna_attitude": motion.at(page)}
-                print(json.dumps(page))
+                print(json.dumps({**page, **receiver.at(page)}))
         else:
             from .ui.sbf_replay import serve_replay
 
             frames = list(pages)
             if not frames:
                 parser.error("The recording contains no supported Galileo I/NAV blocks.")
-            serve_replay(frames, args.port, verification, motion)
+            serve_replay(frames, args.port, verification, receiver)
     except KeyboardInterrupt:
         pass
     except (OSError, ValueError) as exc:
