@@ -1,0 +1,8 @@
+# Dependencies for the OSNMAlib SBF replay test on Python 3.12.
+bitarray==3.12.3
+bitstring==4.4.0
+ecdsa==0.19.2
+pycryptodome==4.4.0
+reedsolo==1.7.0
+six==1.17.0
+tibs==0.5.7

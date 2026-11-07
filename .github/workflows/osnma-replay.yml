@@ -1,0 +1,44 @@
+name: OSNMA replay test
+
+on:
+  push:
+    paths:
+      - .github/workflows/osnma-replay.yml
+      - trisat_sdr/**
+  pull_request:
+    paths:
+      - .github/workflows/osnma-replay.yml
+      - trisat_sdr/**
+
+permissions:
+  contents: read
+
+jobs:
+  osnma-replay:
+    name: Public SBF replay (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Algafix/OSNMA
+          ref: 25aa61de15ea0ffc0bf1bc62ff8214d5898e89e2
+          path: .osnmalib
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -r trisat_sdr/tests/requirements-osnma.txt
+      - name: Verify the public capture and its negative control
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.osnmalib
+          TRISAT_OSNMA_EXAMPLE: ${{ github.workspace }}/.osnmalib/custom_run
+        run: python -m unittest discover -s trisat_sdr/tests -p test_osnma_public_capture.py -v
