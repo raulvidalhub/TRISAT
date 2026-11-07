@@ -101,6 +101,7 @@ fun SignalMonitorScreen(
     val constellationFilters = listOf("ALL", "GPS", "GALILEO", "BEIDOU", "GLONASS", "QZSS", "SBAS")
 
     val satellites = gnssStatus.satellites
+    val estimatedHdop = trustReport.estimatedHdop.takeIf { satellites.isNotEmpty() && !trustReport.isReceiverDataStale }
     val filteredSatellites = remember(satellites, selectedConstellation) {
         if (selectedConstellation == "ALL") satellites
         else satellites.filter { it.constellation.name.equals(selectedConstellation, ignoreCase = true) }
@@ -128,7 +129,7 @@ fun SignalMonitorScreen(
                     HeaderStatsCard(
                         gnssStatus = gnssStatus,
                         filteredSatCount = filteredSatellites.size,
-                        estimatedHdop = trustReport.estimatedHdop.takeIf { gnssStatus.satellites.isNotEmpty() },
+                        estimatedHdop = estimatedHdop,
                         isMockMode = isMockMode,
                         onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                     )
@@ -192,7 +193,7 @@ fun SignalMonitorScreen(
                 HeaderStatsCard(
                     gnssStatus = gnssStatus,
                     filteredSatCount = filteredSatellites.size,
-                    estimatedHdop = trustReport.estimatedHdop.takeIf { gnssStatus.satellites.isNotEmpty() },
+                    estimatedHdop = estimatedHdop,
                     isMockMode = isMockMode,
                     onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                 )

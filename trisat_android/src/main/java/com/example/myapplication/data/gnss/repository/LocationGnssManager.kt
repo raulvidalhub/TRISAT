@@ -13,8 +13,10 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.gnss.engine.OsnmaVerificationEngine
+import com.example.myapplication.data.gnss.engine.ReceiverTrustFreshness
 import com.example.myapplication.data.gnss.engine.TrustScoringEngine
 import com.example.myapplication.data.gnss.mock.MockGnssGenerator
 import com.example.myapplication.data.gnss.model.ConstellationType
@@ -50,7 +52,7 @@ class LocationGnssManager(private val context: Context) {
     private val trustScoringEngine = TrustScoringEngine()
     private val osnmaEngine = OsnmaVerificationEngine()
     val tleDownloader = TleDownloader()
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
     // 3 Operating Modes: 0: INTERNAL_TLE, 1: EXTERNAL_HARDWARE, 2: SIMULATION_TLE
     private val _receiverMode = MutableStateFlow(GnssReceiverMode.INTERNAL_TLE)
@@ -126,6 +128,8 @@ class LocationGnssManager(private val context: Context) {
         Handler(Looper.getMainLooper())
     }
 
+    private val checkReceiverTrustExpiry = Runnable { refreshReceiverTrust() }
+
     // Hardware Callbacks
     private val gnssStatusCallback = object : GnssStatus.Callback() {
         override fun onSatelliteStatusChanged(status: GnssStatus) {
@@ -175,13 +179,14 @@ class LocationGnssManager(private val context: Context) {
                 )
             }
 
-            if (_receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
+            if (_isMonitoringActive.value && _receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
                 stopMockStream()
                 _isMockMode.value = false
                 val newStatus = GnssStatusData(
                     satellites = satList,
                     isMock = false,
-                    timestampMillis = System.currentTimeMillis()
+                    timestampMillis = System.currentTimeMillis(),
+                    receivedAtElapsedMillis = SystemClock.elapsedRealtime()
                 )
                 _gnssStatusData.value = newStatus
                 reevaluateTrust(newStatus = newStatus)
@@ -235,14 +240,15 @@ class LocationGnssManager(private val context: Context) {
                 )
             }
 
-            if (_receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
+            if (_isMonitoringActive.value && _receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
                 val newMeas = GnssMeasurementsData(
                     clockTimeNanos = clockTimeNanos,
                     clockHardwareClockDiscontinuityCount = discontinuity,
                     biasNanos = biasNanos,
                     driftNanosPerSecond = driftNanosPerSecond,
                     measurements = detailList,
-                    timestampMillis = System.currentTimeMillis()
+                    timestampMillis = System.currentTimeMillis(),
+                    receivedAtElapsedMillis = SystemClock.elapsedRealtime()
                 )
                 _gnssMeasurementsData.value = newMeas
                 reevaluateTrust(newMeasurements = newMeas)
@@ -302,6 +308,7 @@ class LocationGnssManager(private val context: Context) {
 
     fun setReceiverMode(mode: GnssReceiverMode) {
         if (_receiverMode.value != mode) {
+            _trustReportData.value = TrustReport()
             _inavMessages.value = emptyList()
             _hasInavSupport.value = false
             _gnssStatusData.value = GnssStatusData()
@@ -399,11 +406,14 @@ class LocationGnssManager(private val context: Context) {
         reevaluateTrust(newStatus = status)
     }
 
-    fun reevaluateTrust(
+    private fun reevaluateTrust(
         newStatus: GnssStatusData = _gnssStatusData.value,
         newMeasurements: GnssMeasurementsData = _gnssMeasurementsData.value,
         newLocation: LocationData = _locationData.value
     ) {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val statusExpiry = ReceiverTrustFreshness.inputExpiry(newStatus.receivedAtElapsedMillis, nowElapsed)
+        val measurementsExpiry = ReceiverTrustFreshness.inputExpiry(newMeasurements.receivedAtElapsedMillis, nowElapsed)
         val realOsnmaStatus = if (_hasInavSupport.value) {
             osnmaEngine.verifyOsnma(_inavMessages.value)
         } else null
@@ -415,12 +425,33 @@ class LocationGnssManager(private val context: Context) {
         } else realOsnmaStatus
 
         val report = trustScoringEngine.evaluateTrust(
-            gnssStatus = newStatus,
-            gnssMeasurements = newMeasurements,
+            gnssStatus = newStatus.takeIf { it.isMock || statusExpiry != null } ?: GnssStatusData(),
+            gnssMeasurements = newMeasurements.takeIf { it.isMock || measurementsExpiry != null }
+                ?: GnssMeasurementsData(),
             location = newLocation,
             osnmaOverride = osnmaOverride
         )
-        _trustReportData.value = report
+        _trustReportData.value = ReceiverTrustFreshness.track(
+            evaluated = report,
+            previous = _trustReportData.value,
+            satelliteStatusExpiry = statusExpiry,
+            rawMeasurementsExpiry = measurementsExpiry
+        )
+        refreshReceiverTrust()
+    }
+
+    fun refreshReceiverTrust() {
+        handler.removeCallbacks(checkReceiverTrustExpiry)
+        val report = _trustReportData.value
+        val expiry = report.receiverInputsExpireAtElapsedMillis ?: return
+        if (report.isReceiverDataStale) return
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed >= expiry) {
+            _trustReportData.value = ReceiverTrustFreshness.expire(report, nowElapsed)
+        } else {
+            handler.postDelayed(checkReceiverTrustExpiry, expiry - nowElapsed)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -513,6 +544,7 @@ class LocationGnssManager(private val context: Context) {
         unregisterHardwareCallbacks()
         stopMockStream()
         hardwareCheckJob?.cancel()
+        handler.removeCallbacks(checkReceiverTrustExpiry)
         _gnssStatusData.value = GnssStatusData()
         _gnssMeasurementsData.value = GnssMeasurementsData()
         _trustReportData.value = TrustReport()

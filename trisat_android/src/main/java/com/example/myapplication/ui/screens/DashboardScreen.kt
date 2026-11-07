@@ -250,7 +250,7 @@ fun DashboardScreen(
         }
 
         // 2. Active Threats Banner / Alert Cards
-        if (trustReport.threatsDetected.isNotEmpty()) {
+        if (!trustReport.isReceiverDataStale && trustReport.threatsDetected.isNotEmpty()) {
             item {
                 Text(
                     text = if (gnssStatus.isMock) {

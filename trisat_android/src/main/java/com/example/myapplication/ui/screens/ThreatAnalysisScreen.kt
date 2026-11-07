@@ -58,6 +58,7 @@ import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
+import com.example.myapplication.data.gnss.model.TrustReport
 import com.example.myapplication.data.gnss.model.TrustSubScores
 import com.example.myapplication.ui.components.StatusBadge
 import com.example.myapplication.ui.components.StatusLevel
@@ -82,8 +83,8 @@ fun ThreatAnalysisScreen(
 
     val trustLevel = trustReport.assessedTrustLevel
     val isSimulatedAssessment = trustReport.assessmentSource == TrustAssessmentSource.SIMULATION
+    val isReceiverDataStale = trustReport.isReceiverDataStale
     val subScores = trustReport.subScores
-    val threats = trustReport.threatsDetected
     val osnmaStatus = trustReport.osnmaStatus
 
     val windowAdaptiveInfo = currentWindowAdaptiveInfo()
@@ -106,29 +107,29 @@ fun ThreatAnalysisScreen(
             ) {
                 item {
                     AntiSpoofingOverviewCard(
-                        trustLevel = trustLevel,
-                        isSimulated = isSimulatedAssessment,
-                        threatCount = threats.size,
+                        trustReport = trustReport,
                         activeScenario = activeScenario,
                         onSelectScenario = { scenario -> gnssViewModel.selectThreatScenario(scenario) }
                     )
                 }
 
-                item {
-                    RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
-                }
-
-                if (gnssStatus.satellites.isNotEmpty()) {
+                if (!isReceiverDataStale) {
                     item {
-                        DopGeometryBreakdownCard(
-                            hdop = trustReport.estimatedHdop,
-                            vdop = trustReport.estimatedVdop
-                        )
+                        RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
                     }
-                }
 
-                item {
-                    OsnmaAuthenticationCard(osnmaStatus = osnmaStatus)
+                    if (gnssStatus.satellites.isNotEmpty()) {
+                        item {
+                            DopGeometryBreakdownCard(
+                                hdop = trustReport.estimatedHdop,
+                                vdop = trustReport.estimatedVdop
+                            )
+                        }
+                    }
+
+                    item {
+                        OsnmaAuthenticationCard(osnmaStatus = osnmaStatus)
+                    }
                 }
 
                 if (trustLevel != null) {
@@ -147,10 +148,10 @@ fun ThreatAnalysisScreen(
             ) {
                 item {
                     Text(
-                        text = if (isSimulatedAssessment) {
-                            "Simulation Event Log (${trustReport.intelligenceLogs.size} Events)"
-                        } else {
-                            "Real-Time Intelligence Threat Feed (${trustReport.intelligenceLogs.size} Events)"
+                        text = when {
+                            isReceiverDataStale -> "Last Receiver Assessment Log"
+                            isSimulatedAssessment -> "Simulation Event Log (${trustReport.intelligenceLogs.size} Events)"
+                            else -> "Real-Time Intelligence Threat Feed (${trustReport.intelligenceLogs.size} Events)"
                         },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
@@ -184,16 +185,16 @@ fun ThreatAnalysisScreen(
 
             item {
                 AntiSpoofingOverviewCard(
-                    trustLevel = trustLevel,
-                    isSimulated = isSimulatedAssessment,
-                    threatCount = threats.size,
+                    trustReport = trustReport,
                     activeScenario = activeScenario,
                     onSelectScenario = { scenario -> gnssViewModel.selectThreatScenario(scenario) }
                 )
             }
 
-            item {
-                RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
+            if (!isReceiverDataStale) {
+                item {
+                    RawClockAndAgcCard(gnssMeasurements = gnssMeasurements)
+                }
             }
 
             item {
@@ -225,32 +226,38 @@ fun ThreatAnalysisScreen(
                 }
             }
 
-            item {
-                Text(
-                    text = "DOP Geometry & Anti-Jamming Verification",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-                )
-            }
-
-            if (gnssStatus.satellites.isNotEmpty()) {
+            if (!isReceiverDataStale) {
                 item {
-                    DopGeometryBreakdownCard(
-                        hdop = trustReport.estimatedHdop,
-                        vdop = trustReport.estimatedVdop
+                    Text(
+                        text = "DOP Geometry & Anti-Jamming Verification",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
                     )
+                }
+
+                if (gnssStatus.satellites.isNotEmpty()) {
+                    item {
+                        DopGeometryBreakdownCard(
+                            hdop = trustReport.estimatedHdop,
+                            vdop = trustReport.estimatedVdop
+                        )
+                    }
+                }
+
+                item {
+                    OsnmaAuthenticationCard(osnmaStatus = osnmaStatus)
                 }
             }
 
             item {
-                OsnmaAuthenticationCard(osnmaStatus = osnmaStatus)
-            }
-
-            item {
                 Text(
-                    text = if (isSimulatedAssessment) "Simulation Event Log" else "Real-Time Threat Intelligence Event Logs",
+                    text = when {
+                        isReceiverDataStale -> "Last Receiver Assessment Log"
+                        isSimulatedAssessment -> "Simulation Event Log"
+                        else -> "Real-Time Threat Intelligence Event Logs"
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -340,12 +347,15 @@ fun TrustabilityGaugeCard(
 
 @Composable
 fun AntiSpoofingOverviewCard(
-    trustLevel: TrustLevel?,
-    isSimulated: Boolean,
-    threatCount: Int,
+    trustReport: TrustReport,
     activeScenario: ThreatScenario,
     onSelectScenario: (ThreatScenario) -> Unit
 ) {
+    val trustLevel = trustReport.assessedTrustLevel
+    val isSimulated = trustReport.assessmentSource == TrustAssessmentSource.SIMULATION
+    val threatCount = trustReport.threatsDetected.size
+    val lastAssessmentMillis = trustReport.lastReceiverAssessmentMillis
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -381,6 +391,7 @@ fun AntiSpoofingOverviewCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = when {
+                            trustReport.isReceiverDataStale -> "Receiver data stale"
                             trustLevel == null -> "Evaluation pending"
                             isSimulated -> "Simulated assessment"
                             threatCount == 0 -> "No active anomalies"
@@ -393,6 +404,7 @@ fun AntiSpoofingOverviewCard(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = when {
+                            trustReport.isReceiverDataStale -> "Waiting for fresh satellite status and raw measurements."
                             trustLevel == null -> "Waiting for enough GNSS data to assess trust."
                             isSimulated -> "Anomaly indicators in this simulation: $threatCount"
                             threatCount == 0 -> "No anomaly indicators in the available measurements."
@@ -401,6 +413,15 @@ fun AntiSpoofingOverviewCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = if (trustLevel == TrustLevel.LOW_TRUST) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (lastAssessmentMillis != null) {
+                        val lastAssessmentTime = SimpleDateFormat("HH:mm:ss", Locale.US)
+                            .format(Date(lastAssessmentMillis))
+                        Text(
+                            text = "Last receiver assessment at $lastAssessmentTime",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 if (trustLevel != null) {
                     StatusBadge(

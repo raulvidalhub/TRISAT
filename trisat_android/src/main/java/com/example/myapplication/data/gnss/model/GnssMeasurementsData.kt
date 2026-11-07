@@ -11,7 +11,8 @@ data class GnssMeasurementsData(
     val measurements: List<GnssMeasurementDetail> = emptyList(),
     val isMock: Boolean = false,
     val timestampMillis: Long = System.currentTimeMillis(),
-    val simulatedAgcDb: Double? = null
+    val simulatedAgcDb: Double? = null,
+    val receivedAtElapsedMillis: Long? = null
 ) {
     val hardwareClockDiscontinuityCount: Int
         get() = clockHardwareClockDiscontinuityCount

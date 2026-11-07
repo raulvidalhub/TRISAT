@@ -11,10 +11,15 @@ data class TrustReport(
     val osnmaStatus: OsnmaStatus = OsnmaStatus.NOT_AVAILABLE,
     val intelligenceLogs: List<IntelligenceLogEntry> = emptyList(),
     val timestampMillis: Long = System.currentTimeMillis(),
-    val assessmentSource: TrustAssessmentSource? = null
+    val assessmentSource: TrustAssessmentSource? = null,
+    val isReceiverDataStale: Boolean = false,
+    internal val receiverInputsExpireAtElapsedMillis: Long? = null
 ) {
     val assessedTrustLevel: TrustLevel?
-        get() = trustLevel.takeIf { assessmentSource != null }
+        get() = trustLevel.takeIf { assessmentSource != null && !isReceiverDataStale }
+
+    val lastReceiverAssessmentMillis: Long?
+        get() = timestampMillis.takeIf { assessmentSource == TrustAssessmentSource.RECEIVER }
 }
 
 enum class TrustAssessmentSource {
