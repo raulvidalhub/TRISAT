@@ -54,7 +54,7 @@ Open a local recording containing `GALRawINAV` blocks from the repository root:
 python -m trisat_sdr.replay_sbf path/to/recording.sbf
 ```
 
-Open the printed loopback URL, select a Galileo satellite, then play or step through its pages. Use `--port` to choose another port or `--jsonl` to export the same sequence as JSON lines. The viewer checks the SBF block CRC and displays the receiver-reported navigation CRC separately. It displays the recorded 234-bit pages and the GPS week/time of week. Only I/NAV is read into the viewer. The original recording remains local.
+Open the printed loopback URL, select a Galileo satellite, then play, step through, or jump to a page. Use `--port` to choose another port or `--jsonl` to export the same sequence as JSON lines. The viewer checks the SBF block CRC and displays the receiver-reported navigation CRC separately. It displays the recorded 234-bit pages and the GPS week/time of week. The original recording remains local.
 
 ### Optional offline OSNMA verification
 
@@ -68,3 +68,13 @@ python -m trisat_sdr.replay_sbf 'C:\path\to\recording.sbf' --merkle-tree 'C:\pat
 ```
 
 Both XML files are required to enable verification. The viewer then shows verified-tag counts per target satellite, broken down by ADKD, as results become available in replay order. With `--jsonl`, the same result is included as `osnma_verification`. The verifier works offline and uses the capture timestamps. A verified tag applies to navigation data, while the CRC and position remain separate observations.
+
+### Optional dual-antenna measurements
+
+If the recording includes `AttEuler` or `AuxAntPositions`, the viewer shows the receiver's heading and pitch or its measured Main–Aux1 separation, along with each solution status and sample timestamp. If `AuxAntPositions` was logged separately, pass the synchronized auxiliary SBF from the same receiver and session. This uses the auxiliary file as the source for the baseline.
+
+```powershell
+python -m trisat_sdr.replay_sbf 'C:\path\to\recording.sbf' --baseline-file 'C:\path\to\auxiliary.sbf'
+```
+
+For each I/NAV page, the viewer uses the latest sample at or before the page's GPS timestamp, up to two seconds old. If no sample meets that condition, the viewer shows “No recent sample”. With `--jsonl`, the corresponding `antenna_attitude` object contains `attitude` and `baseline` entries, each of which can be `null`.

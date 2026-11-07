@@ -4,6 +4,8 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from ..sbf import gps_time_ms
+
 PAGE = """<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -14,7 +16,8 @@ PAGE = """<!doctype html>
   main { max-width: 44rem; margin: 3rem auto; padding: 0 1rem; }
   .source { color: #5eead4; font-weight: 700; }
   .controls { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
-  button, select { font: inherit; padding: .35rem .65rem; }
+  button, select, input { font: inherit; padding: .35rem .65rem; }
+  input { width: 6rem; }
   section { border: 1px solid #476074; border-radius: .65rem; padding: 1rem 1.3rem; margin-top: 1.5rem; }
   dt { color: #b6ccd9; margin-top: .6rem; } dd { margin: 0; }
   code { overflow-wrap: anywhere; }
@@ -31,6 +34,11 @@ PAGE = """<!doctype html>
     <button id="next" disabled>Next</button>
     <button id="last" disabled>Last</button>
   </div>
+  <form id="jump" class="controls">
+    <label for="jump-page">Go to page</label>
+    <input id="jump-page" type="number" min="1" step="1" required disabled>
+    <button id="jump-submit" disabled>Go</button>
+  </form>
   <p id="progress" role="status">Loading recording…</p>
   <section aria-label="Recorded navigation page">
     <dl>
@@ -39,6 +47,18 @@ PAGE = """<!doctype html>
       <dt>Navigation CRC reported by receiver</dt><dd id="crc">—</dd>
       <dt>OSNMA on this page</dt><dd id="osnma">—</dd>
       <dt>Recorded page (234 bits)</dt><dd><code id="payload">—</code></dd>
+    </dl>
+  </section>
+  <section id="antenna-attitude" hidden aria-labelledby="antenna-title">
+    <h2 id="antenna-title">Receiver attitude and antennas</h2>
+    <dl>
+      <dt>Heading</dt><dd id="heading"></dd>
+      <dt>Pitch</dt><dd id="pitch"></dd>
+      <dt>Attitude solution</dt><dd id="attitude-solution"></dd>
+      <dt>Attitude sample</dt><dd id="attitude-sample"></dd>
+      <dt>Main–Aux1 separation</dt><dd id="separation"></dd>
+      <dt>Baseline solution</dt><dd id="baseline-solution"></dd>
+      <dt>Baseline sample</dt><dd id="baseline-sample"></dd>
     </dl>
   </section>
   <section id="verification" hidden aria-labelledby="verification-title">
@@ -55,6 +75,7 @@ PAGE = """<!doctype html>
 <script>
   const element = id => document.getElementById(id);
   const satellite = element('satellite');
+  const jumpPage = element('jump-page'), jumpSubmit = element('jump-submit');
   const previous = element('previous'), play = element('play'), next = element('next'), last = element('last');
   let index = 0, total = 0, timer, sequence = 0, playing = false;
 
@@ -82,6 +103,36 @@ PAGE = """<!doctype html>
       'Galileo week ' + time.galileo_week + ' · GST TOW ' + time.tow_s + ' s' : '—';
   }
 
+  const solutionLabels = {
+    fixed: 'Fixed ambiguities',
+    float: 'Float ambiguities',
+    insufficient_measurements: 'Insufficient measurements',
+    not_requested: 'Attitude disabled on receiver',
+    unavailable: 'No solution'
+  };
+
+  function sampleTime(sample) {
+    return 'GPS week ' + sample.gps_week + ' · TOW ' + (sample.tow_ms / 1000).toFixed(3) +
+      ' s · ' + sample.age_ms + ' ms before this page';
+  }
+
+  function showAttitude(motion) {
+    element('antenna-attitude').hidden = !motion;
+    if (!motion) return;
+    const {attitude, baseline} = motion;
+    const angle = value => value == null ? '—' : value.toFixed(2) + '°';
+    const missing = 'No recent sample';
+    element('heading').textContent = angle(attitude?.heading_deg);
+    element('pitch').textContent = angle(attitude?.pitch_deg);
+    element('attitude-solution').textContent = attitude ? solutionLabels[attitude.solution] : missing;
+    element('attitude-sample').textContent = attitude ? sampleTime(attitude) : '—';
+    element('separation').textContent = baseline?.distance_m == null ? '—' :
+      (baseline.distance_m * 100).toFixed(1) + ' cm';
+    element('baseline-solution').textContent = baseline ? solutionLabels[baseline.solution] : missing;
+    element('baseline-sample').textContent = baseline ?
+      (baseline.source === 'auxiliary' ? 'Auxiliary recording · ' : '') + sampleTime(baseline) : '—';
+  }
+
   async function show(target) {
     const requestId = ++sequence;
     clearTimeout(timer);
@@ -101,6 +152,10 @@ PAGE = """<!doctype html>
         'Received I/NAV · Unverified' : 'Unavailable on this signal';
       element('payload').textContent = frame.payload_hex;
       showVerification(result.osnma_verification);
+      showAttitude(result.antenna_attitude);
+      jumpPage.max = total;
+      jumpPage.value = index + 1;
+      jumpPage.disabled = jumpSubmit.disabled = false;
       previous.disabled = index === 0;
       next.disabled = index + 1 === total;
       last.disabled = next.disabled;
@@ -121,6 +176,11 @@ PAGE = """<!doctype html>
   previous.onclick = () => { pause(); show(index - 1); };
   next.onclick = () => { pause(); show(index + 1); };
   last.onclick = () => { pause(); show(total - 1); };
+  element('jump').onsubmit = event => {
+    event.preventDefault();
+    pause();
+    show(jumpPage.valueAsNumber - 1);
+  };
   play.onclick = () => {
     if (playing) {
       pause();
@@ -145,7 +205,7 @@ PAGE = """<!doctype html>
 """
 
 
-def serve_replay(pages, port, verification=None):
+def serve_replay(pages, port, verification=None, motion=None):
     """Serve one selected capture over loopback."""
     by_satellite = {}
     for index, page in enumerate(pages):
@@ -194,11 +254,12 @@ def serve_replay(pages, port, verification=None):
                 delay_ms = 0
                 if index + 1 < len(selected):
                     following = pages[selected[index + 1]]
-                    delay_ms = max(0, (following["gps_week"] - page["gps_week"]) * 604_800_000
-                                   + following["tow_ms"] - page["tow_ms"])
+                    delay_ms = max(0, gps_time_ms(following) - gps_time_ms(page))
                 result = {"count": len(selected), "page": page, "delay_ms": delay_ms}
                 if verification is not None:
                     result["osnma_verification"] = verification.at(capture_index, page["svid"])
+                if motion is not None and motion.has_data:
+                    result["antenna_attitude"] = motion.at(page)
                 self.respond_json(result)
             else:
                 self.respond_json({"error": "Not found"}, 404)

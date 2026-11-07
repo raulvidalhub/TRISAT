@@ -6,6 +6,7 @@ from pathlib import Path
 
 from trisat_sdr.osnma_replay import VerificationTimeline
 from trisat_sdr.replay_sbf import read_pages
+from trisat_sdr.sbf_attitude import AttitudeTimeline
 
 
 def sbf_block(block_id, body):
@@ -17,6 +18,59 @@ def inav(svid=72, signal=17, nav_crc=1, tow=1000):
     metadata = struct.pack("<IHBBBBH", tow, 2443, svid, nav_crc, 0, signal, 0)
     words = struct.pack("<8I", 0x01020304, *([0] * 6), 0x00FFFFFF)
     return sbf_block(4023, metadata + words)
+
+
+def att_euler(tow, heading=169.5, pitch=-1.5, mode=2, error=0, week=2443):
+    body = struct.pack("<IHBBHH6f", tow, week, 13, error, mode, 0, heading, pitch, -2e10, 0, 0, 0)
+    return sbf_block(5938, body)
+
+
+def aux_ant(tow, east=0.6, north=0, up=0.8, ambiguity=0, error=0, antenna=1):
+    subblock = struct.pack("<4B6d", 13, error, ambiguity, antenna, east, north, up, 0, 0, 0)
+    return sbf_block(5942, struct.pack("<IHBB", tow, 2443, 1, len(subblock)) + subblock)
+
+
+class TestAttitudeTimeline(unittest.TestCase):
+    def timeline(self, recording, auxiliary=None):
+        with tempfile.TemporaryDirectory() as folder:
+            main = Path(folder) / "test.sbf"
+            main.write_bytes(recording)
+            baseline = None
+            if auxiliary is not None:
+                baseline = Path(folder) / "auxiliary.sbf"
+                baseline.write_bytes(auxiliary)
+            return AttitudeTimeline(main, baseline)
+
+    def test_uses_latest_recorded_attitude_without_filling_gaps(self):
+        timeline = self.timeline(att_euler(2000, error=1) + att_euler(1000))
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 999})["attitude"])
+        fixed = timeline.at({"gps_week": 2443, "tow_ms": 1300})["attitude"]
+        self.assertEqual(fixed, {"gps_week": 2443, "tow_ms": 1000, "age_ms": 300,
+                                 "heading_deg": 169.5, "pitch_deg": -1.5, "solution": "fixed"})
+        missing = timeline.at({"gps_week": 2443, "tow_ms": 4000})["attitude"]
+        self.assertEqual(missing["solution"], "insufficient_measurements")
+        self.assertIsNone(missing["heading_deg"])
+        self.assertIsNone(timeline.at({"gps_week": 2443, "tow_ms": 4001})["attitude"])
+
+    def test_matches_across_gps_weeks(self):
+        timeline = self.timeline(att_euler(604799000, mode=1))
+        sample = timeline.at({"gps_week": 2444, "tow_ms": 500})["attitude"]
+        self.assertEqual((sample["solution"], sample["age_ms"]), ("float", 1500))
+
+    def test_reads_baseline_in_either_recording_and_skips_invalid_values(self):
+        time = {"gps_week": 2443, "tow_ms": 1000}
+        main = att_euler(1000) + aux_ant(1000)
+        baseline = self.timeline(main).at(time)["baseline"]
+        self.assertEqual((baseline["distance_m"], baseline["source"]), (1.0, "main"))
+        auxiliary = aux_ant(1200, east=-2e10) + aux_ant(1100, ambiguity=1) + aux_ant(1000, antenna=2)
+        timeline = self.timeline(main, auxiliary)
+        self.assertIsNone(timeline.at(time)["baseline"])
+        baseline = timeline.at({**time, "tow_ms": 1150})["baseline"]
+        self.assertEqual((baseline["distance_m"], baseline["solution"], baseline["source"]),
+                         (1.0, "float", "auxiliary"))
+        self.assertIsNone(timeline.at({**time, "tow_ms": 1200})["baseline"]["distance_m"])
+        with self.assertRaisesRegex(ValueError, "no Main–Aux1 position samples"):
+            self.timeline(main, aux_ant(1000, antenna=2))
 
 
 class TestSbfReplay(unittest.TestCase):
