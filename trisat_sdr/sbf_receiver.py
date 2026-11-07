@@ -1,10 +1,11 @@
-"""Receiver-reported position, attitude, and antenna separation in SBF recordings."""
+"""Receiver-reported measurements and solutions in SBF recordings."""
 
 import math
 import struct
 from bisect import bisect_right
 
 from .sbf import WEEK_MS, gps_time_ms, read_blocks
+from .sbf_measurements import MEAS_EPOCH, signal_quality
 
 ATT_EULER = 5938
 AUX_ANT_POSITIONS = 5942
@@ -115,6 +116,8 @@ def _read_samples(path, block_types, source):
             sample = _attitude(block, timestamp)
         elif kind == PVT_GEODETIC:
             sample = _position(block, timestamp)
+        elif kind == MEAS_EPOCH:
+            sample = signal_quality(block, timestamp)
         else:
             sample = _baseline(block, timestamp, source)
         if sample is not None:
@@ -125,8 +128,8 @@ class ReceiverTimeline:
     """Look up the latest fresh receiver samples at a playback timestamp."""
 
     def __init__(self, recording, baseline_file=None):
-        self._samples = {ATT_EULER: [], AUX_ANT_POSITIONS: [], PVT_GEODETIC: []}
-        block_types = {ATT_EULER, PVT_GEODETIC}
+        self._samples = {ATT_EULER: [], AUX_ANT_POSITIONS: [], PVT_GEODETIC: [], MEAS_EPOCH: []}
+        block_types = {ATT_EULER, PVT_GEODETIC, MEAS_EPOCH}
         if baseline_file is None:
             block_types.add(AUX_ANT_POSITIONS)
         for kind, sample in _read_samples(recording, block_types, "main"):
@@ -164,4 +167,7 @@ class ReceiverTimeline:
         position = self._samples[PVT_GEODETIC]
         if position:
             telemetry["receiver_position"] = self._latest(position, now)
+        quality = self._samples[MEAS_EPOCH]
+        if quality:
+            telemetry["galileo_signal_quality"] = self._latest(quality, now)
         return telemetry

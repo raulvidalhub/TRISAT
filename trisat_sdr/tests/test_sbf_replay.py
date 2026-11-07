@@ -38,6 +38,20 @@ def pvt_geodetic(tow, latitude=47.25, longitude=19.125, height=150.0, mode=1, er
     return sbf_block(4007 | (revision << 13), body)
 
 
+def meas_epoch(tow, measurements=(), flags=0, size1=20, size2=12):
+    body = bytearray(struct.pack("<IH6B", tow, 2443, len(measurements), size1, size2, flags, 0, 0))
+    for svid, signal, cn0, secondary in measurements:
+        primary = bytearray(size1)
+        primary[1], primary[2], primary[15], primary[19] = signal, svid, cn0, len(secondary)
+        body.extend(primary)
+        for sub_signal, sub_cn0 in secondary:
+            subblock = bytearray(size2)
+            subblock[0], subblock[2] = sub_signal, sub_cn0
+            body.extend(subblock)
+    body.extend(bytes(-len(body) % 4))
+    return sbf_block(4027 | (1 << 13), body)
+
+
 class TestReceiverTimeline(unittest.TestCase):
     def timeline(self, recording, auxiliary=None):
         with tempfile.TemporaryDirectory() as folder:
@@ -117,6 +131,50 @@ class TestReceiverTimeline(unittest.TestCase):
         unknown = timeline.at({"gps_week": 2443, "tow_ms": 4000})["receiver_position"]
         self.assertEqual((unknown["solution"], unknown["mode_code"]), ("unknown", 9))
         self.assertIsNone(unknown["latitude_deg"])
+
+    def test_reads_galileo_cn0_from_both_subblock_types_and_antennas(self):
+        timeline = self.timeline(meas_epoch(1000, [
+            (72, 17, 120, [(17 | 32, 116), (21, 108), (21 | 32, 255), (19 | 64, 100), (31, 200)]),
+            (5, 0, 140, []),
+            (73, 20, 105, []),
+        ], flags=0x40, size1=24, size2=16))
+        sample = timeline.at({"gps_week": 2443, "tow_ms": 1250})["galileo_signal_quality"]
+        self.assertEqual(sample["age_ms"], 250)
+        self.assertFalse(sample["scrambled"])
+        self.assertEqual(sample["signals"], [
+            {"svid": 2, "band": "E1", "cn0_dbhz": {"main": 40.0, "aux1": 39.0}},
+            {"svid": 2, "band": "E5b", "cn0_dbhz": {"main": 37.0}},
+            {"svid": 2, "band": "E6-B", "cn0_dbhz": {"aux2": 35.0}},
+            {"svid": 3, "band": "E5a", "cn0_dbhz": {"main": 36.25}},
+        ])
+
+    def test_signal_quality_uses_only_the_matched_epoch(self):
+        timeline = self.timeline(
+            meas_epoch(1000, [(72, 17, 120, [(21, 120)])])
+            + meas_epoch(2000, [(72, 17, 255, [])])
+            + meas_epoch(3000, [(72, 17, 120, [])], flags=0x80)
+            + meas_epoch(4000)
+        )
+
+        def at(tow):
+            return timeline.at({"gps_week": 2443, "tow_ms": tow})["galileo_signal_quality"]
+
+        self.assertIsNone(at(999))
+        self.assertEqual(len(at(1000)["signals"]), 2)
+        self.assertEqual(at(2000)["signals"], [{"svid": 2, "band": "E1", "cn0_dbhz": {}}])
+        self.assertTrue(at(3000)["scrambled"])
+        self.assertEqual(at(3000)["signals"], [])
+        self.assertEqual(at(6000)["signals"], [])
+        self.assertIsNone(at(6001))
+
+    def test_discards_measurement_blocks_with_inconsistent_subblock_lengths(self):
+        block = meas_epoch(1000, [(72, 17, 120, [(21, 120)])])
+        for offset, value in ((15, 19), (16, 11), (39, 2)):
+            with self.subTest(offset=offset):
+                body = bytearray(block[8:])
+                body[offset - 8] = value
+                timeline = self.timeline(sbf_block(4027 | (1 << 13), body))
+                self.assertNotIn("galileo_signal_quality", timeline.at({"gps_week": 2443, "tow_ms": 1000}))
 
 
 class TestSbfReplay(unittest.TestCase):

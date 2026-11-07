@@ -20,6 +20,9 @@ PAGE = """<!doctype html>
   input { width: 6rem; }
   section { border: 1px solid #476074; border-radius: .65rem; padding: 1rem 1.3rem; margin-top: 1.5rem; }
   dt { color: #b6ccd9; margin-top: .6rem; } dd { margin: 0; }
+  .signal-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .signal-table th, .signal-table td { padding: .35rem; border-bottom: 1px solid #476074; text-align: left; }
+  .signal-table :is(th, td):nth-child(n+3) { text-align: right; }
   code { overflow-wrap: anywhere; }
 </style>
 <main>
@@ -48,6 +51,20 @@ PAGE = """<!doctype html>
       <dt>OSNMA on this page</dt><dd id="osnma">—</dd>
       <dt>Recorded page (234 bits)</dt><dd><code id="payload">—</code></dd>
     </dl>
+  </section>
+  <section id="signal-quality" hidden aria-labelledby="signal-quality-title">
+    <h2 id="signal-quality-title">Galileo signal quality</h2>
+    <p>Receiver-reported C/N₀ in dB-Hz, by satellite, band and antenna.</p>
+    <p id="signal-quality-status"></p>
+    <table class="signal-table" id="signal-quality-table" aria-label="Galileo C/N₀ measurements">
+      <thead>
+        <tr>
+          <th scope="col">Satellite</th><th scope="col">Band</th>
+          <th scope="col">Main</th><th scope="col">Aux1</th><th scope="col" id="signal-quality-aux2">Aux2</th>
+        </tr>
+      </thead>
+      <tbody id="signal-quality-rows"></tbody>
+    </table>
   </section>
   <section id="receiver-position" hidden aria-labelledby="position-title">
     <h2 id="position-title">Receiver-reported position</h2>
@@ -86,6 +103,7 @@ PAGE = """<!doctype html>
 </main>
 <script>
   const element = id => document.getElementById(id);
+  const satelliteName = svid => 'E' + String(svid).padStart(2, '0');
   const satellite = element('satellite');
   const jumpPage = element('jump-page'), jumpSubmit = element('jump-submit');
   const previous = element('previous'), play = element('play'), next = element('next'), last = element('last');
@@ -141,6 +159,33 @@ PAGE = """<!doctype html>
       ' s · ' + sample.age_ms + ' ms before this page';
   }
 
+  function showSignalQuality(sample) {
+    element('signal-quality').hidden = sample === undefined;
+    if (sample === undefined) return;
+    const selected = satellite.value;
+    const signals = sample?.signals.filter(signal => !selected || signal.svid === Number(selected)) || [];
+    let status = 'No recent measurement epoch';
+    if (sample) {
+      status = sampleTime(sample);
+      if (sample.scrambled) status += ' · Measurements marked as scrambled by the receiver';
+      else if (!signals.length) status += ' · No Galileo signals for this selection';
+    }
+    element('signal-quality-status').textContent = status;
+    element('signal-quality-table').hidden = !signals.length;
+    const showAux2 = signals.some(signal => signal.cn0_dbhz.aux2 != null);
+    element('signal-quality-aux2').hidden = !showAux2;
+    const antennas = showAux2 ? ['main', 'aux1', 'aux2'] : ['main', 'aux1'];
+    const rows = signals.map(signal => {
+      const row = document.createElement('tr');
+      const levels = antennas.map(antenna => signal.cn0_dbhz[antenna]?.toFixed(2) ?? '—');
+      for (const value of [satelliteName(signal.svid), signal.band, ...levels]) {
+        row.insertCell().textContent = value;
+      }
+      return row;
+    });
+    element('signal-quality-rows').replaceChildren(...rows);
+  }
+
   function showPosition(sample) {
     element('receiver-position').hidden = sample === undefined;
     if (sample === undefined) return;
@@ -191,7 +236,7 @@ PAGE = """<!doctype html>
       total = result.count;
       const frame = result.page;
       element('progress').textContent = 'Page ' + (index + 1) + ' of ' + total;
-      element('signal').textContent = 'E' + String(frame.svid).padStart(2, '0') + ' · ' + frame.band;
+      element('signal').textContent = satelliteName(frame.svid) + ' · ' + frame.band;
       element('timestamp').textContent = 'GPS week ' + frame.gps_week + ' · TOW ' +
         (frame.tow_ms / 1000).toFixed(3) + ' s';
       element('crc').textContent = frame.navigation_crc_passed ? 'Passed' : 'Failed';
@@ -201,6 +246,7 @@ PAGE = """<!doctype html>
       showVerification(result.osnma_verification);
       showAttitude(result.antenna_attitude);
       showPosition(result.receiver_position);
+      showSignalQuality(result.galileo_signal_quality);
       jumpPage.max = total;
       jumpPage.value = index + 1;
       jumpPage.disabled = jumpSubmit.disabled = false;
@@ -243,7 +289,7 @@ PAGE = """<!doctype html>
     for (const svid of result.satellites) {
       const option = document.createElement('option');
       option.value = svid;
-      option.textContent = 'E' + String(svid).padStart(2, '0');
+      option.textContent = satelliteName(svid);
       satellite.appendChild(option);
     }
     show(0);
