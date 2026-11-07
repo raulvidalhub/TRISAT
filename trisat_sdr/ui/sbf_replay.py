@@ -1,0 +1,208 @@
+"""Local browser viewer for a recorded Galileo I/NAV session."""
+
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+PAGE = """<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRISAT · SBF replay</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #101924; color: #eef5fb; }
+  main { max-width: 44rem; margin: 3rem auto; padding: 0 1rem; }
+  .source { color: #5eead4; font-weight: 700; }
+  .controls { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+  button, select { font: inherit; padding: .35rem .65rem; }
+  section { border: 1px solid #476074; border-radius: .65rem; padding: 1rem 1.3rem; margin-top: 1.5rem; }
+  dt { color: #b6ccd9; margin-top: .6rem; } dd { margin: 0; }
+  code { overflow-wrap: anywhere; }
+</style>
+<main>
+  <div class="source">RECORDED RECEIVER DATA · REPLAY</div>
+  <h1>Galileo I/NAV</h1>
+  <p>Inspect pages in the order they were captured by the receiver.</p>
+  <div class="controls">
+    <label for="satellite">Satellite</label>
+    <select id="satellite"><option value="">All Galileo satellites</option></select>
+    <button id="previous" disabled>Previous</button>
+    <button id="play" disabled>Play</button>
+    <button id="next" disabled>Next</button>
+    <button id="last" disabled>Last</button>
+  </div>
+  <p id="progress" role="status">Loading recording…</p>
+  <section aria-label="Recorded navigation page">
+    <dl>
+      <dt>Satellite and signal</dt><dd id="signal">—</dd>
+      <dt>Receiver timestamp</dt><dd id="timestamp">—</dd>
+      <dt>Navigation CRC reported by receiver</dt><dd id="crc">—</dd>
+      <dt>OSNMA on this page</dt><dd id="osnma">—</dd>
+      <dt>Recorded page (234 bits)</dt><dd><code id="payload">—</code></dd>
+    </dl>
+  </section>
+  <section id="verification" hidden aria-labelledby="verification-title">
+    <h2 id="verification-title">OSNMA tag verification · Offline</h2>
+    <p>OSNMAlib results for this satellite through the displayed point in the recording.</p>
+    <dl>
+      <dt>Verified tags</dt><dd id="verified-tags"></dd>
+      <dt>Tags by data type</dt><dd id="verified-types"></dd>
+      <dt>Subframe of latest verification</dt><dd id="verification-time"></dd>
+    </dl>
+    <p>Verification uses the timestamps in the capture. These results describe navigation tags. The page CRC is shown separately.</p>
+  </section>
+</main>
+<script>
+  const element = id => document.getElementById(id);
+  const satellite = element('satellite');
+  const previous = element('previous'), play = element('play'), next = element('next'), last = element('last');
+  let index = 0, total = 0, timer, sequence = 0, playing = false;
+
+  async function request(path) {
+    const response = await fetch(path);
+    if (!response.ok) throw new Error('Could not read the recording.');
+    return response.json();
+  }
+
+  function pause() {
+    playing = false;
+    clearTimeout(timer);
+    play.textContent = 'Play';
+  }
+
+  function showVerification(verification) {
+    element('verification').hidden = !verification;
+    if (!verification) return;
+    element('verified-tags').textContent = verification.verified_tags ?
+      String(verification.verified_tags) : 'None yet';
+    element('verified-types').textContent = Object.entries(verification.by_adkd)
+      .map(([adkd, count]) => 'ADKD ' + adkd + ': ' + count).join(' · ') || '—';
+    const time = verification.processed_subframe;
+    element('verification-time').textContent = time ?
+      'Galileo week ' + time.galileo_week + ' · GST TOW ' + time.tow_s + ' s' : '—';
+  }
+
+  async function show(target) {
+    const requestId = ++sequence;
+    clearTimeout(timer);
+    try {
+      const query = new URLSearchParams({index: target, svid: satellite.value});
+      const result = await request('/api/pages?' + query);
+      if (requestId !== sequence) return;
+      index = target;
+      total = result.count;
+      const frame = result.page;
+      element('progress').textContent = 'Page ' + (index + 1) + ' of ' + total;
+      element('signal').textContent = 'E' + String(frame.svid).padStart(2, '0') + ' · ' + frame.band;
+      element('timestamp').textContent = 'GPS week ' + frame.gps_week + ' · TOW ' +
+        (frame.tow_ms / 1000).toFixed(3) + ' s';
+      element('crc').textContent = frame.navigation_crc_passed ? 'Passed' : 'Failed';
+      element('osnma').textContent = frame.osnma_status === 'unverified' ?
+        'Received I/NAV · Unverified' : 'Unavailable on this signal';
+      element('payload').textContent = frame.payload_hex;
+      showVerification(result.osnma_verification);
+      previous.disabled = index === 0;
+      next.disabled = index + 1 === total;
+      last.disabled = next.disabled;
+      play.disabled = total < 2;
+      if (playing && !next.disabled) {
+        timer = setTimeout(() => show(index + 1), Math.min(result.delay_ms, 2147483647));
+      } else if (playing) {
+        pause();
+      }
+    } catch (error) {
+      if (requestId !== sequence) return;
+      pause();
+      element('progress').textContent = error.message;
+    }
+  }
+
+  satellite.onchange = () => { pause(); show(0); };
+  previous.onclick = () => { pause(); show(index - 1); };
+  next.onclick = () => { pause(); show(index + 1); };
+  last.onclick = () => { pause(); show(total - 1); };
+  play.onclick = () => {
+    if (playing) {
+      pause();
+    } else {
+      playing = true;
+      play.textContent = 'Pause';
+      show(index + 1 < total ? index : 0);
+    }
+  };
+
+  request('/api/satellites').then(result => {
+    for (const svid of result.satellites) {
+      const option = document.createElement('option');
+      option.value = svid;
+      option.textContent = 'E' + String(svid).padStart(2, '0');
+      satellite.appendChild(option);
+    }
+    show(0);
+  }).catch(error => { element('progress').textContent = error.message; });
+</script>
+</html>
+"""
+
+
+def serve_replay(pages, port, verification=None):
+    """Serve one selected capture over loopback."""
+    by_satellite = {}
+    for index, page in enumerate(pages):
+        by_satellite.setdefault(str(page["svid"]), []).append(index)
+    satellites = sorted(int(svid) for svid in by_satellite)
+    all_indices = range(len(pages))
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _format, *args):
+            pass
+
+        def respond(self, status, content_type, body):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def respond_json(self, result, status=200):
+            self.respond(status, "application/json", json.dumps(result).encode("utf-8"))
+
+        def do_GET(self):
+            url = urlsplit(self.path)
+            if url.path == "/":
+                self.respond(200, "text/html; charset=utf-8", PAGE.encode("utf-8"))
+            elif url.path == "/api/satellites":
+                result = {"satellites": satellites}
+                if verification is not None:
+                    result["full_recording_verified_tags"] = verification.totals()
+                self.respond_json(result)
+            elif url.path == "/api/pages":
+                params = parse_qs(url.query)
+                svid = params.get("svid", [""])[0]
+                selected = by_satellite.get(svid, []) if svid else all_indices
+                try:
+                    index = int(params.get("index", ["0"])[0])
+                    if not 0 <= index < len(selected):
+                        raise ValueError
+                except ValueError:
+                    self.respond_json({"error": "Page or satellite not found"}, 400)
+                    return
+
+                capture_index = selected[index]
+                page = pages[capture_index]
+                delay_ms = 0
+                if index + 1 < len(selected):
+                    following = pages[selected[index + 1]]
+                    delay_ms = max(0, (following["gps_week"] - page["gps_week"]) * 604_800_000
+                                   + following["tow_ms"] - page["tow_ms"])
+                result = {"count": len(selected), "page": page, "delay_ms": delay_ms}
+                if verification is not None:
+                    result["osnma_verification"] = verification.at(capture_index, page["svid"])
+                self.respond_json(result)
+            else:
+                self.respond_json({"error": "Not found"}, 404)
+
+    with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
+        print(f"SBF replay: http://127.0.0.1:{server.server_port}/", flush=True)
+        server.serve_forever()

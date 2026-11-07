@@ -47,3 +47,26 @@ The current SDR pipeline produces simulated navigation frames and positioning re
    * `$GALE6HAS,<svid>,<pageId>,<orbitCorrCm>,<hexPayload>*CS`
    * `$GALE5,<band>,<svid>,<pageType>,<hexPayload>*CS`
    * `$GNGGA`, `$GAGSV`, `$GPGSV`, and JSON objects compatible with the TRISAT BLE bridge.
+
+## Replay a Septentrio SBF capture
+
+Open a local recording containing `GALRawINAV` blocks from the repository root:
+
+```bash
+python -m trisat_sdr.replay_sbf path/to/recording.sbf
+```
+
+Open the printed loopback URL, select a Galileo satellite, then play or step through its pages. Use `--port` to choose another port or `--jsonl` to export the same sequence as JSON lines. The viewer checks the SBF block CRC and displays the receiver-reported navigation CRC separately. It displays the recorded 234-bit pages and the GPS week/time of week. Only I/NAV is read into the viewer. The original recording remains local.
+
+### Optional offline OSNMA verification
+
+Install the dependencies of a local [OSNMAlib](https://github.com/Algafix/OSNMA) checkout into the Python environment used by TRISAT and make the checkout importable. This adapter was tested with Python 3.12 and OSNMAlib commit `25aa61de15ea0ffc0bf1bc62ff8214d5898e89e2`. Use trusted [Galileo key material](https://www.gsc-europa.eu/galileo/services/galileo-open-service-navigation-message-authentication-osnma/galileo-osnma-idd) appropriate to the date of the capture.
+
+Example in PowerShell from the TRISAT checkout:
+
+```powershell
+$env:PYTHONPATH = 'C:\path\to\OSNMA'
+python -m trisat_sdr.replay_sbf 'C:\path\to\recording.sbf' --merkle-tree 'C:\path\to\MerkleTree.xml' --public-key 'C:\path\to\PublicKey.xml'
+```
+
+Both XML files are required to enable verification. The viewer then shows verified-tag counts per target satellite, broken down by ADKD, as results become available in replay order. With `--jsonl`, the same result is included as `osnma_verification`. The verifier works offline and uses the capture timestamps. A verified tag applies to navigation data, while the CRC and position remain separate observations.
