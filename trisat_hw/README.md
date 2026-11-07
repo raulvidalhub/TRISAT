@@ -74,7 +74,12 @@ Used for direct USB-C connection between the SparkFun ZED-F9P board and a Mac or
   ```bash
   python3 trisat_hw/zed_f9p/f9p_bridge.py
   ```
-  Automatically enables Galileo I/NAV subframes (`UBX-RXM-SFRBX`), multi-constellation GSV (`UBX-NAV-SAT`), and high-rate GGA/RMC, broadcasting them to UDP `127.0.0.1:9090`.
+  Requests NMEA GSV, GGA, RMC, GSA, GST, and `UBX-RXM-SFRBX` output on the connected USB port. The bridge forwards complete NMEA sentences and checksum-validated UBX packets to UDP port `9090` on localhost and the local network. Each UBX datagram starts with `RAW:`.
+
+* **Test without a receiver:**
+  ```bash
+  python3 -m unittest discover -s trisat_hw/zed_f9p/tests -v
+  ```
 
 * **Factory Restore:**
   ```bash

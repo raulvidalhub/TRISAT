@@ -9,11 +9,15 @@ via UDP (:9090) across localhost and local LAN (for iPhone/iPad on Wi-Fi).
 
 import sys
 import glob
-import time
 import socket
-import serial
+
+if __package__:
+    from .f9p_stream import F9pStream, build_ubx_msg
+else:
+    from f9p_stream import F9pStream, build_ubx_msg
 
 UDP_PORT = 9090
+MAX_UDP_PAYLOAD = 65_507
 
 def find_f9p_port():
     candidates = glob.glob("/dev/cu.usbmodem*")
@@ -27,6 +31,8 @@ def main():
         print("[-] Error: No u-blox ZED-F9P detected on USB (/dev/cu.usbmodem*).")
         print("    Please connect the USB-C cable directly to the red ZED-F9P board.")
         sys.exit(1)
+
+    import serial
 
     print("=" * 64)
     print("  TRISAT - u-blox ZED-F9P USB Native Telemetry Bridge")
@@ -44,60 +50,45 @@ def main():
         ser.rts = True
         print(f"[+] Connected to {port} at 115200 bps")
     except Exception as e:
+        sock.close()
         print(f"[-] Error opening {port}: {e}")
         sys.exit(1)
 
-    # 1. Poll hardware version
-    ser.write(bytes([0xB5, 0x62, 0x0A, 0x04, 0x00, 0x00, 0x0E, 0x34]))
-
-    # 2. Enable NMEA sentences at 1 Hz on USB:
-    # GSV (Satellites in view with C/N0 for Galileo, GPS, BeiDou, GLONASS)
-    ser.write(bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x06, 0x4C]))
-    # GGA (Position, fix mode, HDOP)
-    ser.write(bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x03, 0x39]))
-    # RMC (PVT, date/time, speed)
-    ser.write(bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x07, 0x51]))
-    # GSA (DOP and active satellites)
-    ser.write(bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x05, 0x45]))
-    # GST (Pseudorange error and precision)
-    ser.write(bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0xF0, 0x07, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x0A, 0x5E]))
-
-    # 3. Enable raw Galileo navigation subframe messages UBX-RXM-SFRBX (1 Hz)
-    enable_sfrbx = bytes([0xB5, 0x62, 0x06, 0x01, 0x08, 0x00, 0x02, 0x13, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x25, 0x4B])
-    ser.write(enable_sfrbx)
-    ser.flush()
-
-    print(f"[+] Live streaming active (Localhost & Wi-Fi Broadcast :9090). Press Ctrl+C to stop.\n")
-
     try:
+        ser.write(build_ubx_msg(0x0A, 0x04))  # Poll hardware version.
+        # The three-byte CFG-MSG sets the rate for the current port (USB).
+        # Enable NMEA GSV, GGA, RMC, GSA, GST, and the raw UBX-RXM-SFRBX message.
+        messages = (
+            (0xF0, 0x03), (0xF0, 0x00), (0xF0, 0x04),
+            (0xF0, 0x02), (0xF0, 0x07), (0x02, 0x13),
+        )
+        for msg_class, msg_id in messages:
+            ser.write(build_ubx_msg(0x06, 0x01, bytes((msg_class, msg_id, 1))))
+        ser.flush()
+
+        print(f"[+] Live streaming active (Localhost & Wi-Fi Broadcast :{UDP_PORT}). Press Ctrl+C to stop.\n")
+        stream = F9pStream()
         while True:
-            line = ser.readline()
-            if not line:
-                continue
-
-            # NMEA ASCII Sentences
-            if line.startswith(b"$"):
-                ascii_str = line.decode("ascii", errors="ignore").strip()
-                if ascii_str:
+            chunk = ser.read(min(ser.in_waiting, 4096) or 1)
+            for frame in stream.feed(chunk):
+                if frame.startswith(b"$"):
+                    ascii_str = frame.decode("ascii").strip()
                     print(f"[NMEA] {ascii_str}")
-                    payload = (ascii_str + "\n").encode("utf-8")
-                    # Send to localhost (Mac app)
-                    sock.sendto(payload, ("127.0.0.1", UDP_PORT))
-                    # Broadcast to Wi-Fi subnet (iPhone app)
-                    sock.sendto(payload, ("255.255.255.255", UDP_PORT))
-
-            # UBX Binary Frames
-            elif line.startswith(b"\xb5\x62"):
-                hex_str = " ".join(f"{b:02X}" for b in line[:16])
-                print(f"[UBX-RAW] {hex_str}...")
-                raw_payload = b"RAW:" + line
-                sock.sendto(raw_payload, ("127.0.0.1", UDP_PORT))
-                sock.sendto(raw_payload, ("255.255.255.255", UDP_PORT))
+                    payload = (ascii_str + "\n").encode("ascii")
+                else:
+                    payload = b"RAW:" + frame
+                    if len(payload) > MAX_UDP_PAYLOAD:
+                        continue
+                    hex_str = " ".join(f"{byte:02X}" for byte in frame[:16])
+                    print(f"[UBX-RAW] {hex_str}...")
+                sock.sendto(payload, ("127.0.0.1", UDP_PORT))
+                sock.sendto(payload, ("255.255.255.255", UDP_PORT))
 
     except KeyboardInterrupt:
         print("\n[+] Bridge stopped by user.")
     finally:
         ser.close()
+        sock.close()
 
 if __name__ == "__main__":
     main()
