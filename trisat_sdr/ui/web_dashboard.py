@@ -7,8 +7,9 @@ GNU/Linux, and Windows without requiring external web server libraries.
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit
 
+from ..config import GNSS_BANDS
 from ..receiver import TrisatSdrReceiver
 
 
@@ -524,36 +525,41 @@ class TrisatWebDashboardServer:
             def log_message(self, format: str, *args) -> None:
                 pass  # Suppress noisy console access logs
 
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                if parsed.path == "/api/status":
-                    snap = receiver_ref.get_status_snapshot()
-                    body = json.dumps(snap).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
+            def respond(self, status, body, content_type, *, cors=False):
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                if cors:
                     self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(body)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def respond_json(self, status, payload, *, cors=False):
+                body = json.dumps(payload).encode("utf-8")
+                self.respond(status, body, "application/json", cors=cors)
+
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                if path == "/":
+                    self.respond(200, DASHBOARD_HTML.encode("utf-8"), "text/html; charset=utf-8")
+                elif path == "/api/status":
+                    self.respond_json(200, receiver_ref.get_status_snapshot(), cors=True)
                 else:
-                    body = DASHBOARD_HTML.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self.respond_json(404, {"error": "Route not found"})
 
             def do_POST(self):
-                parsed = urlparse(self.path)
-                if parsed.path == "/api/set_band":
-                    qs = parse_qs(parsed.query)
-                    band = qs.get("band", ["GAL_E6"])[0]
-                    receiver_ref.switch_secondary_band(band, dual_enabled=True)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"ok"}')
-                else:
-                    self.send_response(404)
-                    self.end_headers()
+                parsed = urlsplit(self.path)
+                if parsed.path != "/api/set_band":
+                    self.respond_json(404, {"error": "Route not found"})
+                    return
+
+                bands = parse_qs(parsed.query, keep_blank_values=True).get("band", ["GAL_E6"])
+                if len(bands) != 1 or bands[0] not in GNSS_BANDS:
+                    self.respond_json(400, {"error": "Provide one valid band key"})
+                    return
+
+                receiver_ref.switch_secondary_band(bands[0], dual_enabled=True)
+                self.respond_json(200, {"status": "ok"})
 
         self._httpd = ReusableThreadingHTTPServer((self.host, self.port), Handler)
         # Also mirror on port 8080 if primary port is 8085 (or vice versa) so both URLs work
