@@ -10,16 +10,18 @@ data class GnssMeasurementsData(
     val driftUncertaintyNanosPerSecond: Double? = null,
     val measurements: List<GnssMeasurementDetail> = emptyList(),
     val isMock: Boolean = false,
-    val timestampMillis: Long = System.currentTimeMillis()
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val simulatedAgcDb: Double? = null
 ) {
     val hardwareClockDiscontinuityCount: Int
         get() = clockHardwareClockDiscontinuityCount
 
-    val averageAgcDb: Double
+    internal val agcLevelsDb: List<Double>
         get() {
-            val agcMeasurements = measurements.filter { it.hasAgc }
-            return if (agcMeasurements.isNotEmpty()) {
-                agcMeasurements.map { it.automaticGainControlLevelDb }.average()
-            } else 0.0
+            if (isMock && simulatedAgcDb != null) return listOf(simulatedAgcDb)
+            return measurements.filter { it.hasAgc }.map { it.automaticGainControlLevelDb }
         }
+
+    val averageAgcDb: Double
+        get() = agcLevelsDb.takeIf { it.isNotEmpty() }?.average() ?: 0.0
 }

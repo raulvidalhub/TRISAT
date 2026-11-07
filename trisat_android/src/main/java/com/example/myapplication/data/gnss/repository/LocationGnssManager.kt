@@ -375,7 +375,7 @@ class LocationGnssManager(private val context: Context) {
             timestampMillis = System.currentTimeMillis()
         )
         if (isSimulationMode) {
-            _gnssMeasurementsData.value = mockGnssGenerator.createClockSample(scenario, status.timestampMillis)
+            _gnssMeasurementsData.value = mockGnssGenerator.createOrbitalSample(scenario, status.timestampMillis)
         }
         _gnssStatusData.value = status
         reevaluateTrust(newStatus = status)

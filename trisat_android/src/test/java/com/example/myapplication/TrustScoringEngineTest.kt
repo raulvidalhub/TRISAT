@@ -82,6 +82,45 @@ class TrustScoringEngineTest {
     }
 
     @Test
+    fun testOrbitalDemoAgcDropsUnderJammingAndRecoversInNominalScenario() = runBlocking {
+        val status = generator.createGnssStatusFlow().first()
+        val location = LocationData()
+        val nominalSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+        val jammedSample = generator.createOrbitalSample(ThreatScenario.RF_JAMMING, status.timestampMillis)
+        val restoredSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+
+        assertTrue(jammedSample.isMock)
+        assertTrue(jammedSample.measurements.isEmpty())
+        assertTrue(jammedSample.averageAgcDb in -16.9..-16.1)
+        assertTrue(nominalSample.averageAgcDb in -1.4..-1.0)
+        assertTrue(restoredSample.averageAgcDb in -1.4..-1.0)
+
+        val nominal = engine.evaluateTrust(status, nominalSample, location)
+        val jammed = engine.evaluateTrust(status, jammedSample, location)
+        val restored = engine.evaluateTrust(status, restoredSample, location)
+
+        assertEquals(TrustAssessmentSource.SIMULATION, jammed.assessmentSource)
+        assertEquals(20f, jammed.subScores.agcInterferenceScore, 0f)
+        assertTrue(ThreatType.RF_JAMMING_ELEVATED in jammed.threatsDetected)
+        assertTrue(jammed.overallScore < nominal.overallScore)
+        assertEquals(TrustLevel.LOW_TRUST, jammed.assessedTrustLevel)
+        assertTrue(jammed.intelligenceLogs.any { it.tag == "JAMMING_DETECTOR" && it.message.startsWith("Simulated RF interference") })
+
+        assertEquals(100f, restored.subScores.agcInterferenceScore, 0f)
+        assertFalse(ThreatType.RF_JAMMING_ELEVATED in restored.threatsDetected)
+        assertEquals(nominal.overallScore, restored.overallScore, 0f)
+    }
+
+    @Test
+    fun testSimulatedAgcIsIgnoredInReceiverMeasurements() {
+        val measurements = GnssMeasurementsData(simulatedAgcDb = -16.5)
+        val report = engine.evaluateTrust(GnssStatusData(), measurements, LocationData())
+
+        assertTrue(measurements.agcLevelsDb.isEmpty())
+        assertFalse(ThreatType.RF_JAMMING_ELEVATED in report.threatsDetected)
+    }
+
+    @Test
     fun testClockDriftAnomalyDetection() = runBlocking {
         generator.setScenario(ThreatScenario.CLOCK_DRIFT_ATTACK)
         val status = generator.createGnssStatusFlow().first()
@@ -99,8 +138,8 @@ class TrustScoringEngineTest {
     fun testOrbitalDemoClockChangesTrustWithoutRawSatelliteMeasurements() = runBlocking {
         val status = generator.createGnssStatusFlow().first()
         val location = LocationData()
-        val nominalSample = generator.createClockSample(ThreatScenario.NOMINAL, status.timestampMillis)
-        val attackSample = generator.createClockSample(ThreatScenario.CLOCK_DRIFT_ATTACK, status.timestampMillis)
+        val nominalSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+        val attackSample = generator.createOrbitalSample(ThreatScenario.CLOCK_DRIFT_ATTACK, status.timestampMillis)
 
         assertTrue(attackSample.isMock)
         assertTrue(attackSample.measurements.isEmpty())

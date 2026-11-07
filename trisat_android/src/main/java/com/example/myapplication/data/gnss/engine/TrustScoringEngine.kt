@@ -244,14 +244,15 @@ class TrustScoringEngine {
         warnings: MutableList<String>
     ): Pair<Float, List<IntelligenceLogEntry>> {
         val logs = mutableListOf<IntelligenceLogEntry>()
-        val agcList = measurements.measurements.filter { it.hasAgc }.map { it.automaticGainControlLevelDb }
+        val agcList = measurements.agcLevelsDb
 
         if (agcList.isEmpty()) {
             return Pair(90f, listOf(IntelligenceLogEntry(tag = "AGC_EVAL", severity = "INFO", message = "AGC measurement level unavailable on current chipset.")))
         }
 
         val avgAgc = agcList.average()
-        val minAgc = agcList.minOrNull() ?: 0.0
+        val minAgc = agcList.min()
+        val formattedAvg = String.format(Locale.US, "%.1f", avgAgc)
 
         var score = 100f
 
@@ -259,24 +260,33 @@ class TrustScoringEngine {
             val severityDeduction = if (avgAgc < -15.0) 80f else 50f
             score -= severityDeduction
             threats.add(ThreatType.RF_JAMMING_ELEVATED)
-            warnings.add("Elevated RF Interference: Automatic Gain Control gain suppressed (Avg AGC: ${String.format(Locale.US, "%.1f", avgAgc)} dB).")
+            val interferenceLabel = if (measurements.isMock) "Simulated RF Interference" else "Elevated RF Interference"
+            warnings.add("$interferenceLabel: Automatic Gain Control gain suppressed (Avg AGC: $formattedAvg dB).")
             logs.add(
                 IntelligenceLogEntry(
                     severity = "ALERT",
                     tag = "JAMMING_DETECTOR",
-                    message = "ALERT: AGC gain suppression indicates high in-band RF power / jamming."
+                    message = if (measurements.isMock) {
+                        "Simulated RF interference reduced receiver gain (AGC: $formattedAvg dB)."
+                    } else {
+                        "ALERT: AGC gain suppression indicates high in-band RF power / jamming."
+                    }
                 )
             )
         } else if (avgAgc < -6.0) {
             score -= 20f
-            warnings.add("Minor AGC gain decrease observed (${String.format(Locale.US, "%.1f", avgAgc)} dB). Monitoring interference.")
+            warnings.add("Minor AGC gain decrease observed ($formattedAvg dB). Monitoring interference.")
         }
 
         logs.add(
             IntelligenceLogEntry(
                 severity = "INFO",
                 tag = "AGC_EVAL",
-                message = "AGC Eval: Avg ${String.format(Locale.US, "%.1f", avgAgc)} dB over ${agcList.size} raw channels."
+                message = if (measurements.isMock) {
+                    "Simulated AGC: $formattedAvg dB average."
+                } else {
+                    "AGC Eval: Avg $formattedAvg dB over ${agcList.size} raw channels."
+                }
             )
         )
 

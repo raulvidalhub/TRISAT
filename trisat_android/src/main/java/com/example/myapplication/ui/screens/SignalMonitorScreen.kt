@@ -1069,7 +1069,7 @@ fun BandDistributionRow(band: FrequencyBandSummary) {
 
 @Composable
 fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
-    val avgAgc = gnssMeasurements.averageAgcDb.takeIf { gnssMeasurements.measurements.any { it.hasAgc } }
+    val avgAgc = gnssMeasurements.agcLevelsDb.takeIf { it.isNotEmpty() }?.average()
     val hasRfInterference = avgAgc != null && avgAgc < -10.0
     val drift = gnssMeasurements.driftNanosPerSecond
     val bias = gnssMeasurements.biasNanos
@@ -1130,7 +1130,7 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
                     value = if (avgAgc != null) String.format(Locale.US, "%.1f dB", avgAgc) else "—",
                     subtitle = when {
                         avgAgc == null -> "Unavailable"
-                        hasRfInterference -> "RF Suppression"
+                        hasRfInterference -> "Gain Suppression"
                         else -> "Normal Gain"
                     },
                     icon = Icons.Rounded.Speed,

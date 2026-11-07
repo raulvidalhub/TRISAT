@@ -116,7 +116,14 @@ class MockGnssGenerator {
         }
     }
 
-    internal fun createClockSample(
+    internal fun createOrbitalSample(
+        scenario: ThreatScenario,
+        timestampMillis: Long
+    ): GnssMeasurementsData = createClockSample(scenario, timestampMillis).copy(
+        simulatedAgcDb = createAgcLevel(scenario)
+    )
+
+    private fun createClockSample(
         scenario: ThreatScenario,
         timestampMillis: Long
     ): GnssMeasurementsData {
@@ -140,16 +147,19 @@ class MockGnssGenerator {
         )
     }
 
+    private fun createAgcLevel(scenario: ThreatScenario): Double =
+        if (scenario == ThreatScenario.RF_JAMMING) {
+            -16.5 + (Random.nextDouble() - 0.5) * 0.8
+        } else {
+            -1.2 + (Random.nextDouble() - 0.5) * 0.4
+        }
+
     fun createGnssMeasurementsFlow(periodMillis: Long = 1000L): Flow<GnssMeasurementsData> = flow {
         while (true) {
             val scenario = activeScenario
             val clockSample = createClockSample(scenario, System.currentTimeMillis())
             val clockNanos = clockSample.clockTimeNanos
-            val agcBaseDb = if (scenario == ThreatScenario.RF_JAMMING) {
-                -16.5 + (Random.nextDouble() - 0.5) * 0.8
-            } else {
-                -1.2 + (Random.nextDouble() - 0.5) * 0.4
-            }
+            val agcBaseDb = createAgcLevel(scenario)
 
             val rawMeasurements = baseSatellites.map { sat ->
                 val pseudorangeRate = -450.0 + (Random.nextDouble() - 0.5) * 25.0
