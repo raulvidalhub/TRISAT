@@ -1,0 +1,23 @@
+name: Verify native TRISAT builds
+on:
+  push:
+    branches: [validation/osnma-native]
+permissions:
+  contents: read
+jobs:
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: trisat_ios/TRISAT.xcodeproj
+            destination: generic/platform=iOS Simulator
+          - project: trisat_mac/TRISAT.xcodeproj
+            destination: generic/platform=macOS
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - name: Build
+        run: xcodebuild -project "${{ matrix.project }}" -scheme TRISAT -destination "${{ matrix.destination }}" CODE_SIGNING_ALLOWED=NO build
