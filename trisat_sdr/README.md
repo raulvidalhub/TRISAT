@@ -29,7 +29,7 @@ python3 trisat_sdr/main.py
 # 2. Select the secondary HackRF band (GAL_E6, GAL_E5A, GAL_E5B, GAL_E5_ALTBOC)
 python3 trisat_sdr/main.py --band2 GAL_E5_ALTBOC
 
-# 3. Headless console mode streaming frames over UDP, TCP, and Virtual Serial Port
+# 3. Headless console mode streaming frames over UDP and TCP
 python3 trisat_sdr/main.py --headless
 ```
 
@@ -41,12 +41,14 @@ The current SDR pipeline produces simulated navigation frames and positioning re
 
 `TRISAT-SDR` sends simulated frames and telemetry as JSON with `"source": "simulated"`. For a dedicated legacy test client, pass `--emit-legacy-simulation` to also send NMEA and custom navigation sentences. Legacy sentences have no provenance field, and GGA reports no real fix. Supported transports:
 1. **UDP Server (`127.0.0.1:5005`)** and **TCP Server (`0.0.0.0:5006`)**
-2. **POSIX Virtual Serial Port (`PTY`, e.g. `/dev/ttys004`) on macOS/Linux**, selectable directly from `MacSerialPortManager` within the native macOS/iOS app.
+2. **POSIX virtual serial device (`PTY`) on macOS/Linux** can be allocated. Serial output is currently unavailable.
 3. **Broadcast Frame Formats:**
    * `$GALINAV,<svid>,<wordType>,<hex30Bytes>,<osnmaHkroot><osnmaMack>*CS`
    * `$GALE6HAS,<svid>,<pageId>,<orbitCorrCm>,<hexPayload>*CS`
    * `$GALE5,<band>,<svid>,<pageType>,<hexPayload>*CS`
    * `$GNGGA`, `$GAGSV`, `$GPGSV`, and JSON objects compatible with the TRISAT BLE bridge.
+
+The dashboard and `/api/status` separate generated lines from local socket writes. Each encoded line contributes to `bridge.messages_generated` and `bytes_generated` once. Each distinct UDP destination (the configured port and port 9090) or connected TCP client counts as one attempt. The `packets_sent` and `bytes_sent` totals count complete writes accepted by the local socket, summed across destinations. The `transports` breakdown reports attempts and accepted writes by channel. Delivery to the receiving application is unverified.
 
 ## Replay a Septentrio SBF capture
 

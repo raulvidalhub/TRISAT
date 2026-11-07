@@ -340,8 +340,6 @@ class TrisatSdrReceiver:
                     "tcp_listen": f"{self.config.telemetry.tcp_bind_host}:{self.config.telemetry.tcp_port}",
                     "tcp_clients": self.streamer.connected_tcp_clients_count,
                     "pty_serial_device": self.streamer.pty_slave_path or "N/A",
-                    "packets_sent": self.streamer.packets_sent,
-                    "bytes_sent": self.streamer.bytes_sent,
-                    "recent_nmea": list(self.streamer.recent_nmea_log[-18:]),
+                    **self.streamer.get_stats_snapshot(),
                 },
             }

@@ -105,7 +105,7 @@ def print_banner(snap: dict, web_url: str = "") -> None:
     print("-" * 78)
     print(f" [BRIDGE] UDP Stream : udp://{br['udp_target']}")
     print(f" [BRIDGE] TCP Server : tcp://{br['tcp_listen']}")
-    print(f" [BRIDGE] Serial PTY : {br['pty_serial_device']}  <-- Connectable from TRISAT macOS App!")
+    print(f" [BRIDGE] Serial PTY : {br['pty_serial_device']} (output unavailable)")
     if web_url:
         print(f" [WEB UI] Dashboard  : {web_url}")
     print("=" * 78)

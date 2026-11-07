@@ -258,11 +258,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>🔗 TRISAT Telemetry Bridge (NMEA / $GALINAV / JSON)</span>
-      <span class="badge badge-cyan" id="bridgePkts">0 pkts</span>
+      <span class="badge badge-cyan" id="bridgeGenerated">0 generated</span>
     </h2>
     <div class="kv-row"><span>UDP Stream (iOS/Android/Mac):</span><span id="bridgeUdp" style="color:#34d399;">--</span></div>
+    <div class="kv-row"><span>UDP local writes</span><span id="bridgeUdpWrites">--</span></div>
     <div class="kv-row"><span>TCP Server (Multi-client):</span><span id="bridgeTcp" style="color:#38bdf8;">--</span></div>
-    <div class="kv-row"><span>macOS Virtual Serial (PTY):</span><span id="bridgePty" style="color:#fbbf24;">--</span></div>
+    <div class="kv-row"><span>TCP local writes</span><span id="bridgeTcpWrites">--</span></div>
+    <div class="kv-row"><span>Serial output (PTY)</span><span id="bridgePty" style="color:#fbbf24;">--</span></div>
+    <div style="color:var(--muted); margin-top:8px;">Recent generated NMEA</div>
     <div class="mono-box" id="nmeaBox" style="height:105px; margin-top:8px; color:#34d399;"></div>
   </div>
 </div>
@@ -499,10 +502,16 @@ async function pollStatus() {
     }
 
     const br = data.bridge;
-    document.getElementById('bridgePkts').textContent = br.packets_sent + ' pkts (' + (br.bytes_sent/1024).toFixed(1) + ' KB)';
+    document.getElementById('bridgeGenerated').textContent = br.messages_generated + ' generated';
     document.getElementById('bridgeUdp').textContent = 'udp://' + br.udp_target;
     document.getElementById('bridgeTcp').textContent = 'tcp://' + br.tcp_listen + ' (' + br.tcp_clients + ' clients)';
-    document.getElementById('bridgePty').textContent = br.pty_serial_device;
+    for (const [transport, elementId] of [['udp', 'bridgeUdpWrites'], ['tcp', 'bridgeTcpWrites']]) {
+      const stats = br.transports[transport];
+      document.getElementById(elementId).textContent =
+        stats.packets_sent + ' accepted / ' + stats.attempts + ' attempted (' + stats.bytes_sent + ' B)';
+    }
+    document.getElementById('bridgePty').textContent = br.pty_serial_device === 'N/A'
+      ? 'Unavailable' : br.pty_serial_device + ' (output unavailable)';
     document.getElementById('nmeaBox').innerHTML = (br.recent_nmea || []).map(l => '<div>' + l + '</div>').join('');
 
     const chs = data.tracking_channels || [];
