@@ -1,7 +1,7 @@
 name: Verify native TRISAT builds
 on:
   push:
-    branches: [validation/osnma-native]
+    branches: [validation/osnma-native, codex/trisat-integration]
 permissions:
   contents: read
 jobs:
@@ -17,7 +17,9 @@ jobs:
           - project: trisat_mac/TRISAT.xcodeproj
             destination: generic/platform=macOS
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: xcodebuild -version
       - name: Build
         run: xcodebuild -project "${{ matrix.project }}" -scheme TRISAT -destination "${{ matrix.destination }}" CODE_SIGNING_ALLOWED=NO build
