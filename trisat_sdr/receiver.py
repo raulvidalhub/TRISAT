@@ -296,6 +296,7 @@ class TrisatSdrReceiver:
             p_band = GNSS_BANDS[self.config.primary_sdr.band_id]
             s_band = GNSS_BANDS[self.config.secondary_sdr.band_id]
             return {
+                "source": "simulated",
                 "epoch": self.epoch_count,
                 "dual_sdr_enabled": self.config.dual_sdr_enabled,
                 "primary_sdr": {

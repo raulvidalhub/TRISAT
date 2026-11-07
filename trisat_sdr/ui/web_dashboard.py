@@ -153,7 +153,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <p>Portable SDR Baseband Engine (macOS · GNU/Linux · Windows) | Dual-HackRF Synchronized (E1 OSNMA + E5 AltBOC + E6 HAS)</p>
   </div>
   <div style="display:flex; gap:10px; align-items:center;">
-    <span id="fixBadge" class="badge badge-green">INITIALIZING...</span>
+    <span class="badge badge-amber">SIMULATED DATA</span>
+    <span id="fixBadge" class="badge badge-cyan">INITIALIZING...</span>
     <span id="epochBadge" class="badge badge-cyan">EPOCH 0</span>
   </div>
 </header>
@@ -266,12 +267,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>🛡️ Galileo OSNMA Cryptographic Engine</span>
-      <span class="badge badge-green" id="osnmaBadge">ECDSA + TESLA VERIFIED</span>
+      <span class="badge badge-amber" id="osnmaBadge">SIMULATED</span>
     </h2>
     <div class="kv-row"><span>NMA Status / Chain / CPKS:</span><span id="osnmaNmas" style="color:#34d399;">--</span></div>
     <div class="kv-row"><span>PKID / MACLT / Key & Tag:</span><span id="osnmaParams">--</span></div>
-    <div class="kv-row"><span>DSM-KROOT ECDSA P-256:</span><span id="osnmaEcdsa" style="color:#22d3ee;">--</span></div>
-    <div class="kv-row"><span>TESLA Chain (K_I -> KROOT):</span><span id="osnmaTesla" style="color:#fbbf24;">--</span></div>
+    <div class="kv-row"><span>Session authentication:</span><span id="osnmaEcdsa" style="color:#22d3ee;">--</span></div>
+    <div class="kv-row"><span>Verified received keys / tags:</span><span id="osnmaTesla" style="color:#fbbf24;">--</span></div>
     <div class="kv-row"><span>Annex A Vector Test:</span><span id="osnmaAnnexA" style="color:#34d399;">--</span></div>
     <div class="cmd-line" id="osnmaKeyLine">KROOT: --</div>
   </div>
@@ -279,7 +280,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>📐 Galileo HAS-UA (PP SEPVT + PPPSD EKF)</span>
-      <span class="badge badge-purple" id="hasUaBadge">SL1 PPP ACTIVE</span>
+      <span class="badge badge-purple" id="hasUaBadge">HAS SCENARIO</span>
     </h2>
     <div class="kv-row"><span>Pivot Satellites (Eq. 80):</span><span id="hasPivots" style="color:#c084fc;">--</span></div>
     <div class="kv-row"><span>Reed-Solomon RS(255,32) GF(2^8):</span><span id="hasRs">--</span></div>
@@ -410,13 +411,13 @@ async function pollStatus() {
 
     if (data.pvt) {
       const pvt = data.pvt;
-      document.getElementById('fixBadge').textContent = pvt.valid_fix ? '3D FIX LOCKED' : 'ACQUIRING';
+      document.getElementById('fixBadge').textContent = pvt.valid_fix ? 'SIMULATED FIX' : 'SIMULATED ACQUISITION';
       document.getElementById('pvtMode').textContent = pvt.solution_mode;
       document.getElementById('pvtLatLon').textContent = pvt.latitude_deg.toFixed(6) + '°, ' + pvt.longitude_deg.toFixed(6) + '°';
       document.getElementById('pvtAltClk').textContent = pvt.altitude_m.toFixed(1) + ' m | ' + pvt.clock_bias_ns.toFixed(1) + ' ns';
       document.getElementById('pvtAcc').textContent = '±' + pvt.horizontal_accuracy_m.toFixed(2) + ' m (2D) / ±' + pvt.vertical_accuracy_m.toFixed(2) + ' m (1D)';
       document.getElementById('pvtDop').textContent = pvt.gdop + ' / ' + pvt.pdop + ' / ' + pvt.hdop;
-      document.getElementById('pvtOsnma').textContent = pvt.osnma_authenticated_sats + ' Sats Verified (HKROOT+MACK)';
+      document.getElementById('pvtOsnma').textContent = 'Simulated OSNMA';
       document.getElementById('pvtHas').textContent = pvt.has_corrected_sats + ' Sats Corrected (E6 C/NAV)';
     }
 
@@ -465,10 +466,10 @@ async function pollStatus() {
       const o = data.osnma;
       document.getElementById('osnmaNmas').textContent = o.nmas_status + ' | CID=' + o.cid + ' | ' + o.cpks_status;
       document.getElementById('osnmaParams').textContent = 'PKID=' + o.pkid + ' | MACLT=' + o.maclt_id + ' | KS=' + o.key_size_bits + 'b TS=' + o.tag_size_bits + 'b';
-      document.getElementById('osnmaEcdsa').textContent = o.dsm_kroot_ecdsa_verified ? '✓ P-256 Signature Verified (Merkle Root OK)' : 'Pending';
+      document.getElementById('osnmaEcdsa').textContent = 'No received OSNMA verification';
       document.getElementById('osnmaTesla').textContent = o.verified_keys_count + ' Keys / ' + o.verified_tags_count + ' Tags (SVs: ' + (o.authenticated_svids || []).join(',') + ')';
       document.getElementById('osnmaAnnexA').textContent = o.annex_a_selftest_passed ? '✓ PASSED (E02 WN=1248 MACSEQ=0xB08)' : 'FAILED';
-      document.getElementById('osnmaKeyLine').textContent = 'KROOT: ' + o.latest_kroot_hex + ' | K_I: ' + o.latest_tesla_key_hex;
+      document.getElementById('osnmaKeyLine').textContent = 'Test vector KROOT: ' + o.latest_kroot_hex + ' | K_I: ' + o.latest_tesla_key_hex;
     }
 
     if (data.has_ua) {

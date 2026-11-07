@@ -110,8 +110,7 @@ struct SignalProcessingView: View {
                 telemetryBridge.startTrisatSdrEngine()
             }) {
                 Label("Start Simulator", systemImage: "play.fill")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.subheadline.weight(.semibold))
             }
             .buttonStyle(.borderedProminent)
             .tint(.cyan)

@@ -2,20 +2,9 @@ import Foundation
 import CryptoKit
 
 /// OS-NMA Cryptographic Authentication Engine for macOS & iOS (Galileo OSNMA SIS ICD v1.1 & RX Guidelines v1.3)
-enum OsnmaAuthStatus {
-    case verified
-    case unauthenticated
-    case failed
+enum OsnmaAuthStatus: Equatable {
+    case unverified
     case notAvailable
-
-    var badgeText: String {
-        switch self {
-        case .verified: return "OS-NMA VERIFIED (TESLA + ECDSA)"
-        case .unauthenticated: return "SYNCING HKROOT / TESLA"
-        case .failed: return "AUTH FAILED"
-        case .notAvailable: return "NO I/NAV DETECTED"
-        }
-    }
 }
 
 class OsnmaEngine {
@@ -77,20 +66,9 @@ class OsnmaEngine {
         return tagHex == "7BB238C883"
     }
 
-    /// Evaluates OSNMA authentication status based on captured Galileo I/NAV navigation subframes
-    func verifyOsnma(inavMessages: [GalileoINavMessage]) -> OsnmaAuthStatus {
-        guard !inavMessages.isEmpty else {
-            return .notAvailable
-        }
-
-        let validFrames = inavMessages.filter { !$0.data.isEmpty }
-        if validFrames.count >= 2 && OsnmaEngine.verifyEuspaAnnexATestVector() {
-            return .verified
-        } else if !validFrames.isEmpty {
-            return .unauthenticated
-        } else {
-            return .notAvailable
-        }
+    /// Reports reception. The received pages have not been authenticated.
+    func receptionStatus(inavMessages: [GalileoINavMessage]) -> OsnmaAuthStatus {
+        return inavMessages.contains { !$0.data.isEmpty } ? .unverified : .notAvailable
     }
 
     private static func hexToData(_ hex: String) -> Data? {

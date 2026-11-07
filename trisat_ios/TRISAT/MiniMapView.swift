@@ -24,7 +24,7 @@ struct MiniMapView: View {
                     .fontWeight(.bold)
                     .foregroundColor(.secondary)
                 Spacer()
-                Text("GNSS LIVE")
+                Text("DISPLAYED POSITION")
                     .font(.caption2)
                     .fontWeight(.bold)
                     .foregroundColor(.cyan)

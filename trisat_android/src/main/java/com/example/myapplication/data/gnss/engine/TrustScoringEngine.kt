@@ -418,34 +418,33 @@ class TrustScoringEngine {
         val logs = mutableListOf<IntelligenceLogEntry>()
         val galileoCount = status.satellites.count { it.constellation == ConstellationType.GALILEO }
 
-        val computedStatus = osnmaOverride ?: if (galileoCount >= 3) {
-            OsnmaStatus.VERIFIED
-        } else if (galileoCount > 0) {
-            OsnmaStatus.UNAUTHENTICATED
+        val computedStatus = if (status.isMock) {
+            if (osnmaOverride == OsnmaStatus.SIMULATED_FAILURE) {
+                OsnmaStatus.SIMULATED_FAILURE
+            } else {
+                OsnmaStatus.SIMULATED
+            }
         } else {
-            OsnmaStatus.NOT_AVAILABLE
+            osnmaOverride ?: OsnmaStatus.NOT_AVAILABLE
         }
 
         val score = when (computedStatus) {
             OsnmaStatus.VERIFIED -> 100f
-            OsnmaStatus.UNAUTHENTICATED -> {
-                warnings.add("Galileo OSNMA cryptographic signatures unverified across tracked E1B channels.")
-                threats.add(ThreatType.UNAUTHENTICATED_SIGNAL)
-                55f
-            }
+            OsnmaStatus.UNAUTHENTICATED -> 75f
             OsnmaStatus.FAILED -> {
                 warnings.add("Galileo OSNMA cryptographic verification FAILED - potential signal tampering!")
                 threats.add(ThreatType.UNAUTHENTICATED_SIGNAL)
                 0f
             }
-            OsnmaStatus.NOT_AVAILABLE -> 75f
+            OsnmaStatus.SIMULATED_FAILURE -> 0f
+            OsnmaStatus.SIMULATED, OsnmaStatus.NOT_AVAILABLE -> 75f
         }
 
         logs.add(
             IntelligenceLogEntry(
                 severity = if (computedStatus == OsnmaStatus.FAILED) "ALERT" else "INFO",
                 tag = "OSNMA_AUTH",
-                message = "Galileo OSNMA Cryptographic Status: ${computedStatus.label} ($galileoCount Galileo sats tracked)."
+                message = "Galileo OSNMA Status: ${computedStatus.label} ($galileoCount Galileo sats tracked)."
             )
         )
 

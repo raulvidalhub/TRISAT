@@ -88,17 +88,14 @@ class PvtSolver:
         sky_sats: List[SatelliteSkyPosition] = []
         has_e6 = any(ch.band_id == "GAL_E6" for ch in locked_ch)
         has_e5 = any("E5" in ch.band_id for ch in locked_ch)
-        osnma_count = 0
-        has_count = 0
+        galileo_e1_count = 0
 
         for idx, ((constellation, svid), ch_list) in enumerate(sorted(by_svid.items())):
             primary_ch = ch_list[0]
             bands = {c.band_id for c in ch_list}
             is_gal = constellation == "GALILEO"
             if is_gal and "GAL_E1" in bands:
-                osnma_count += 1
-            if is_gal and "GAL_E6" in bands:
-                has_count += 1
+                galileo_e1_count += 1
 
             # Deterministic orbital geometry slowly evolving with time
             angle_seed = (svid * 47 + self._epoch * 0.2) % 360.0
@@ -114,8 +111,8 @@ class PvtSolver:
                     azimuth_deg=azim,
                     cn0_dbhz=max(c.cn0_dbhz for c in ch_list),
                     used_in_fix=len(by_svid) >= 4,
-                    has_osnma=is_gal and ("GAL_E1" in bands),
-                    has_e6_ppp=is_gal and ("GAL_E6" in bands),
+                    has_osnma=False,
+                    has_e6_ppp=False,
                 )
             )
 
@@ -137,23 +134,23 @@ class PvtSolver:
                 hdop=99.9,
                 vdop=99.9,
                 num_sats_used=num_sats,
-                osnma_authenticated_sats=osnma_count,
-                has_corrected_sats=has_count,
+                osnma_authenticated_sats=0,
+                has_corrected_sats=0,
                 satellites=sky_sats,
                 timestamp_utc=time.strftime("%H:%M:%S UTC", time.gmtime()),
             )
 
         # Determine positioning accuracy and mode based on active Dual-HackRF bands
-        if has_e6 and osnma_count >= 4:
-            mode = "DUAL-SDR E1(OSNMA) + E6(HAS PPP)"
+        if has_e6 and galileo_e1_count >= 4:
+            mode = "SIMULATED E1 + E6 (HAS scenario)"
             h_acc = 0.18  # 18 cm Galileo HAS High Accuracy Service target!
             v_acc = 0.29
         elif has_e5:
-            mode = "DUAL-SDR E1 + E5 IONO-FREE"
+            mode = "SIMULATED E1 + E5 (iono-free scenario)"
             h_acc = 0.65
             v_acc = 1.05
         else:
-            mode = "SINGLE-SDR E1(OSNMA) + GPS L1"
+            mode = "SIMULATED E1 + GPS L1"
             h_acc = 1.85
             v_acc = 2.90
 
@@ -183,8 +180,8 @@ class PvtSolver:
             hdop=hdop,
             vdop=vdop,
             num_sats_used=num_sats,
-            osnma_authenticated_sats=osnma_count,
-            has_corrected_sats=has_count,
+            osnma_authenticated_sats=0,
+            has_corrected_sats=0,
             satellites=sky_sats,
             timestamp_utc=time.strftime("%H:%M:%S UTC", time.gmtime()),
         )

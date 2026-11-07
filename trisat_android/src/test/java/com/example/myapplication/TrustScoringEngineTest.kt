@@ -38,7 +38,11 @@ class TrustScoringEngineTest {
         assertTrue("Overall score should be >= 80%", report.overallScore >= 80f)
         assertTrue("No threats should be detected in nominal scenario", report.threatsDetected.isEmpty())
         assertTrue("Active warnings should be empty", report.activeThreatWarnings.isEmpty())
-        assertEquals(OsnmaStatus.VERIFIED, report.osnmaStatus)
+        assertEquals(OsnmaStatus.SIMULATED, report.osnmaStatus)
+        assertEquals(
+            OsnmaStatus.NOT_AVAILABLE,
+            engine.evaluateTrust(status.copy(isMock = false), measurements, location.copy(isMock = false)).osnmaStatus
+        )
         assertTrue("Intelligence logs should be generated", report.intelligenceLogs.isNotEmpty())
     }
 
@@ -98,12 +102,12 @@ class TrustScoringEngineTest {
             gnssStatus = status,
             gnssMeasurements = measurements,
             location = location,
-            osnmaOverride = OsnmaStatus.FAILED
+            osnmaOverride = OsnmaStatus.SIMULATED_FAILURE
         )
 
         assertNotNull(report)
-        assertEquals(OsnmaStatus.FAILED, report.osnmaStatus)
-        assertTrue("Should detect unauthenticated signal threat", report.threatsDetected.contains(ThreatType.UNAUTHENTICATED_SIGNAL))
+        assertEquals(OsnmaStatus.SIMULATED_FAILURE, report.osnmaStatus)
+        assertFalse(report.threatsDetected.contains(ThreatType.UNAUTHENTICATED_SIGNAL))
         assertEquals(0f, report.subScores.osnmaAuthScore, 0.01f)
     }
 

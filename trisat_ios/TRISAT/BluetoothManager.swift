@@ -379,25 +379,14 @@ class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         if trimmed.contains("$GALINAV") || trimmed.contains("$RAWNAV") {
             let parts = trimmed.components(separatedBy: ",")
             if parts.count >= 4 {
-                let svid = Int(parts[1]) ?? 1
-                let submsgId = Int(parts[2]) ?? 1
-                let hexPayload = parts[3].components(separatedBy: "*")[0].trimmingCharacters(in: .whitespacesAndNewlines)
-
-                var rawBytes = [UInt8]()
-                var sIndex = hexPayload.startIndex
-                while sIndex < hexPayload.endIndex {
-                    let eIndex = hexPayload.index(sIndex, offsetBy: 2, limitedBy: hexPayload.endIndex) ?? hexPayload.endIndex
-                    if let b = UInt8(hexPayload[sIndex..<eIndex], radix: 16) {
-                        rawBytes.append(b)
-                    }
-                    sIndex = eIndex
-                }
-
-                let inavData = rawBytes.isEmpty ? Data((0..<30).map { _ in UInt8.random(in: 0...255) }) : Data(rawBytes)
+                let hexPayload = parts[3].components(separatedBy: "*")[0]
+                guard let svid = Int(parts[1]), (1...36).contains(svid),
+                      let submsgId = Int(parts[2]),
+                      let rawData = GalileoINavMessage.decodeHexPayload(hexPayload) else { return }
                 let msg = GalileoINavMessage(
                     svid: svid,
                     submessageId: submsgId,
-                    data: inavData,
+                    data: rawData,
                     status: 0,
                     timestamp: Date(),
                     band: "E1-B"

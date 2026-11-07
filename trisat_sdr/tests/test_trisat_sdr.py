@@ -8,15 +8,17 @@ Verifies:
   5. Dual-HackRF Receiver Pipeline & Telemetry Bridge
 """
 
+import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from trisat_sdr.bridge.telemetry_streamer import format_gngga_sentence, format_gsv_sentences  # noqa: E402
+from trisat_sdr.bridge.telemetry_streamer import TelemetryStreamer, format_gngga_sentence, format_gsv_sentences  # noqa: E402
 from trisat_sdr.config import ReceiverConfig  # noqa: E402
 from trisat_sdr.dsp.acquisition import PcpsAcquisitionEngine  # noqa: E402
 from trisat_sdr.dsp.codes import (  # noqa: E402
@@ -75,19 +77,21 @@ class TestTrisatSdr(unittest.TestCase):
     def test_euspa_osnma_engine_annex_a_vectors(self):
         osnma = GalileoOsnmaEngine()
         summary = osnma.get_summary()
-        self.assertTrue(summary.merkle_root_verified)
-        self.assertTrue(summary.dsm_kroot_ecdsa_verified)
-        self.assertTrue(summary.tesla_chain_verified)
-        self.assertTrue(summary.macseq_verified)
+        self.assertEqual(summary.status, "simulated")
+        self.assertFalse(summary.merkle_root_verified)
+        self.assertFalse(summary.dsm_kroot_ecdsa_verified)
+        self.assertFalse(summary.tesla_chain_verified)
+        self.assertFalse(summary.macseq_verified)
         self.assertTrue(summary.annex_a_selftest_passed)
 
-        # Feed live subframes and verify HMAC-SHA-256 tag generation
-        hkroot_hex, mack_hex = osnma.authenticate_subframe_tag(
+        # Generating a demo tag does not authenticate any received satellite.
+        hkroot_hex, mack_hex = osnma.generate_simulated_subframe_tag(
             svid=11, navdata_bytes=b"\x01\x02\x03\x04\x05\x06\x07\x08", tow_sf=345660
         )
         self.assertEqual(len(hkroot_hex), 2)
         self.assertEqual(len(mack_hex), 8)
-        self.assertIn(11, osnma.get_summary().authenticated_svids)
+        self.assertEqual(osnma.get_summary().authenticated_svids, [])
+        self.assertEqual(osnma.get_summary().verified_tags_count, 0)
 
     def test_euspa_has_ua_engine_and_ntcm_g(self):
         has_ua = GalileoHasUaEngine()
@@ -133,7 +137,10 @@ class TestTrisatSdr(unittest.TestCase):
         self.assertGreaterEqual(len(acqs), 8)
 
         snap = rx.step_epoch()
+        self.assertEqual(snap["source"], "simulated")
         self.assertTrue(snap["pvt"]["valid_fix"])
+        self.assertEqual(snap["pvt"]["osnma_authenticated_sats"], 0)
+        self.assertEqual(snap["pvt"]["has_corrected_sats"], 0)
         self.assertIn("HAS", snap["pvt"]["solution_mode"])
         self.assertTrue(snap["osnma"]["annex_a_selftest_passed"])
         self.assertEqual(snap["has_ua"]["solving_mode"], 2)
@@ -146,8 +153,20 @@ class TestTrisatSdr(unittest.TestCase):
 
         gga = format_gngga_sentence(rx.latest_pvt)
         self.assertTrue(gga.startswith("$GNGGA,"))
+        self.assertEqual(gga.split(",")[6], "0")
         gsv = format_gsv_sentences(rx.latest_pvt.satellites)
         self.assertGreaterEqual(len(gsv), 1)
+
+        # Default transport emits only messages with explicit simulated provenance.
+        streamer = TelemetryStreamer(ReceiverConfig().telemetry)
+        with patch.object(streamer, "_broadcast_line") as broadcast:
+            streamer.publish_decoded_frame(rx.decoded_frames[0])
+            streamer.publish_pvt(rx.latest_pvt)
+        packets = [json.loads(call.args[0]) for call in broadcast.call_args_list]
+        self.assertEqual(len(packets), 3)
+        self.assertTrue(all(packet["source"] == "simulated" for packet in packets))
+        self.assertEqual(packets[1]["osnmaSats"], 0)
+        self.assertTrue(all(not sat["osnma"] for sat in packets[2]["satellites"]))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ class GnssViewModel: ObservableObject {
 
     // Mode: 0 = Internal + TLE, 1 = External BLE / USB Bridge, 2 = TLE Simulation
     @Published var selectedMode: Int = 1
+    var externalSatellites: [SatelliteInfo] = []
+    var skySourceLabel: String {
+        selectedMode == 1 && !externalSatellites.isEmpty ? "EXTERNAL TELEMETRY" : "PREDICTED SKY"
+    }
     @Published var timeOffsetHours: Double = 0.0
 
     // Constellation Filters
@@ -67,8 +71,8 @@ class GnssViewModel: ObservableObject {
         let coord = currentCoordinate
 
         let allSats: [SatelliteInfo]
-        if selectedMode == 1 && !displayedSatellites.isEmpty {
-            allSats = displayedSatellites
+        if selectedMode == 1 && !externalSatellites.isEmpty {
+            allSats = externalSatellites
         } else if selectedMode == 2 {
             allSats = Sgp4OrbitPropagator.propagateToSkyplot(tles: tleDownloader.parsedTles, timeOffsetHours: timeOffsetHours, observerLocation: coord)
         } else {
@@ -263,13 +267,14 @@ class GnssViewModel: ObservableObject {
 
         let activeSats = satelliteStore.values.map { $0.info }
 
-        // Update displayedSatellites without clearing
-        displayedSatellites = activeSats.sorted {
+        // Keep received satellites separate from the predicted sky.
+        externalSatellites = activeSats.sorted {
             if $0.constellation != $1.constellation {
                 return $0.constellation.rawValue < $1.constellation.rawValue
             }
             return $0.svid < $1.svid
         }
+        updateSatellites()
     }
 
     private func parseNmeaCoord(_ rawVal: String, dir: String) -> Double? {

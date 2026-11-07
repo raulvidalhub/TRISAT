@@ -134,8 +134,8 @@ class TelemetryBridgeConfig:
     tcp_bind_host: str = "0.0.0.0"
     tcp_port: int = 5006
     pty_serial_enabled: bool = True
-    emit_nmea: bool = True
-    emit_galinav_raw: bool = True
+    emit_nmea: bool = False
+    emit_galinav_raw: bool = False
     emit_trisat_json: bool = True
 
 
