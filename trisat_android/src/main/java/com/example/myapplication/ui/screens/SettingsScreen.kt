@@ -60,6 +60,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myapplication.data.gnss.model.GnssReceiverMode
+import com.example.myapplication.ui.components.ExternalUdpStatusCard
 import com.example.myapplication.ui.components.StatusBadge
 import com.example.myapplication.ui.components.StatusLevel
 import com.example.myapplication.ui.theme.TRISATTheme
@@ -105,6 +106,7 @@ fun SettingsScreen(
 
     val isMockMode by gnssViewModel.isMockMode.collectAsState()
     val receiverMode by gnssViewModel.receiverMode.collectAsState()
+    val externalUdpStatus by gnssViewModel.externalUdpStatus.collectAsState()
     val isTleDownloading by gnssViewModel.tleDownloader.isDownloading.collectAsState()
     val totalTleCount by gnssViewModel.tleDownloader.totalTleCount.collectAsState()
     val galileoCount by gnssViewModel.tleDownloader.galileoCount.collectAsState()
@@ -192,6 +194,10 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        if (receiverMode == GnssReceiverMode.EXTERNAL_HARDWARE) {
+            item { ExternalUdpStatusCard(externalUdpStatus) }
         }
 
         // Section 2: CelesTrak TLE Catalog Manager (Visible when Mode 2 is Active)

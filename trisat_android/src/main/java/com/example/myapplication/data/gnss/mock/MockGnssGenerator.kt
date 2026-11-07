@@ -116,27 +116,50 @@ class MockGnssGenerator {
         }
     }
 
+    internal fun createOrbitalSample(
+        scenario: ThreatScenario,
+        timestampMillis: Long
+    ): GnssMeasurementsData = createClockSample(scenario, timestampMillis).copy(
+        simulatedAgcDb = createAgcLevel(scenario)
+    )
+
+    private fun createClockSample(
+        scenario: ThreatScenario,
+        timestampMillis: Long
+    ): GnssMeasurementsData {
+        val isClockAttack = scenario == ThreatScenario.CLOCK_DRIFT_ATTACK
+        val drift = if (isClockAttack) {
+            385.0 + (Random.nextDouble() - 0.5) * 8.0
+        } else {
+            -12.4 + (Random.nextDouble() - 0.5) * 0.8
+        }
+
+        return GnssMeasurementsData(
+            clockTimeNanos = System.nanoTime(),
+            clockHardwareClockDiscontinuityCount = if (isClockAttack) 3 else 0,
+            fullBiasNanos = -1318283401239082341L,
+            biasNanos = -45.2 + (Random.nextDouble() - 0.5) * 1.2,
+            biasUncertaintyNanos = 2.4,
+            driftNanosPerSecond = drift,
+            driftUncertaintyNanosPerSecond = 0.15,
+            isMock = true,
+            timestampMillis = timestampMillis
+        )
+    }
+
+    private fun createAgcLevel(scenario: ThreatScenario): Double =
+        if (scenario == ThreatScenario.RF_JAMMING) {
+            -16.5 + (Random.nextDouble() - 0.5) * 0.8
+        } else {
+            -1.2 + (Random.nextDouble() - 0.5) * 0.4
+        }
+
     fun createGnssMeasurementsFlow(periodMillis: Long = 1000L): Flow<GnssMeasurementsData> = flow {
-        val fullBiasNanos = -1318283401239082341L
-
         while (true) {
-            val now = System.currentTimeMillis()
-            val clockNanos = System.nanoTime()
             val scenario = activeScenario
-
-            val clockDiscontinuity = if (scenario == ThreatScenario.CLOCK_DRIFT_ATTACK) 3 else 0
-            val clockDrift = if (scenario == ThreatScenario.CLOCK_DRIFT_ATTACK) {
-                385.0 + (Random.nextDouble() - 0.5) * 8.0
-            } else {
-                -12.4 + (Random.nextDouble() - 0.5) * 0.8
-            }
-
-            val clockBias = -45.2 + (Random.nextDouble() - 0.5) * 1.2
-            val agcBaseDb = if (scenario == ThreatScenario.RF_JAMMING) {
-                -16.5 + (Random.nextDouble() - 0.5) * 0.8
-            } else {
-                -1.2 + (Random.nextDouble() - 0.5) * 0.4
-            }
+            val clockSample = createClockSample(scenario, System.currentTimeMillis())
+            val clockNanos = clockSample.clockTimeNanos
+            val agcBaseDb = createAgcLevel(scenario)
 
             val rawMeasurements = baseSatellites.map { sat ->
                 val pseudorangeRate = -450.0 + (Random.nextDouble() - 0.5) * 25.0
@@ -167,20 +190,7 @@ class MockGnssGenerator {
                 )
             }
 
-            emit(
-                GnssMeasurementsData(
-                    clockTimeNanos = clockNanos,
-                    clockHardwareClockDiscontinuityCount = clockDiscontinuity,
-                    fullBiasNanos = fullBiasNanos,
-                    biasNanos = clockBias,
-                    biasUncertaintyNanos = 2.4,
-                    driftNanosPerSecond = clockDrift,
-                    driftUncertaintyNanosPerSecond = 0.15,
-                    measurements = rawMeasurements,
-                    isMock = true,
-                    timestampMillis = now
-                )
-            )
+            emit(clockSample.copy(measurements = rawMeasurements))
             delay(periodMillis)
         }
     }

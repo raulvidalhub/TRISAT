@@ -3,6 +3,7 @@ package com.example.myapplication
 import com.example.myapplication.data.gnss.engine.TrustScoringEngine
 import com.example.myapplication.data.gnss.mock.MockGnssGenerator
 import com.example.myapplication.data.gnss.model.ConstellationType
+import com.example.myapplication.data.gnss.model.GnssMeasurementDetail
 import com.example.myapplication.data.gnss.model.GnssMeasurementsData
 import com.example.myapplication.data.gnss.model.GnssStatusData
 import com.example.myapplication.data.gnss.model.LocationData
@@ -10,12 +11,15 @@ import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.SatelliteDetail
 import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.ThreatType
+import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
+import com.example.myapplication.data.gnss.model.TrustReport
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -78,6 +82,45 @@ class TrustScoringEngineTest {
     }
 
     @Test
+    fun testOrbitalDemoAgcDropsUnderJammingAndRecoversInNominalScenario() = runBlocking {
+        val status = generator.createGnssStatusFlow().first()
+        val location = LocationData()
+        val nominalSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+        val jammedSample = generator.createOrbitalSample(ThreatScenario.RF_JAMMING, status.timestampMillis)
+        val restoredSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+
+        assertTrue(jammedSample.isMock)
+        assertTrue(jammedSample.measurements.isEmpty())
+        assertTrue(jammedSample.averageAgcDb in -16.9..-16.1)
+        assertTrue(nominalSample.averageAgcDb in -1.4..-1.0)
+        assertTrue(restoredSample.averageAgcDb in -1.4..-1.0)
+
+        val nominal = engine.evaluateTrust(status, nominalSample, location)
+        val jammed = engine.evaluateTrust(status, jammedSample, location)
+        val restored = engine.evaluateTrust(status, restoredSample, location)
+
+        assertEquals(TrustAssessmentSource.SIMULATION, jammed.assessmentSource)
+        assertEquals(20f, jammed.subScores.agcInterferenceScore, 0f)
+        assertTrue(ThreatType.RF_JAMMING_ELEVATED in jammed.threatsDetected)
+        assertTrue(jammed.overallScore < nominal.overallScore)
+        assertEquals(TrustLevel.LOW_TRUST, jammed.assessedTrustLevel)
+        assertTrue(jammed.intelligenceLogs.any { it.tag == "JAMMING_DETECTOR" && it.message.startsWith("Simulated RF interference") })
+
+        assertEquals(100f, restored.subScores.agcInterferenceScore, 0f)
+        assertFalse(ThreatType.RF_JAMMING_ELEVATED in restored.threatsDetected)
+        assertEquals(nominal.overallScore, restored.overallScore, 0f)
+    }
+
+    @Test
+    fun testSimulatedAgcIsIgnoredInReceiverMeasurements() {
+        val measurements = GnssMeasurementsData(simulatedAgcDb = -16.5)
+        val report = engine.evaluateTrust(GnssStatusData(), measurements, LocationData())
+
+        assertTrue(measurements.agcLevelsDb.isEmpty())
+        assertFalse(ThreatType.RF_JAMMING_ELEVATED in report.threatsDetected)
+    }
+
+    @Test
     fun testClockDriftAnomalyDetection() = runBlocking {
         generator.setScenario(ThreatScenario.CLOCK_DRIFT_ATTACK)
         val status = generator.createGnssStatusFlow().first()
@@ -89,6 +132,31 @@ class TrustScoringEngineTest {
         assertNotNull(report)
         assertTrue("Should detect clock drift threat", report.threatsDetected.contains(ThreatType.CLOCK_DRIFT_ANOMALY))
         assertTrue("Clock stability subscore should drop", report.subScores.clockStabilityScore < 60f)
+    }
+
+    @Test
+    fun testOrbitalDemoClockChangesTrustWithoutRawSatelliteMeasurements() = runBlocking {
+        val status = generator.createGnssStatusFlow().first()
+        val location = LocationData()
+        val nominalSample = generator.createOrbitalSample(ThreatScenario.NOMINAL, status.timestampMillis)
+        val attackSample = generator.createOrbitalSample(ThreatScenario.CLOCK_DRIFT_ATTACK, status.timestampMillis)
+
+        assertTrue(attackSample.isMock)
+        assertTrue(attackSample.measurements.isEmpty())
+        assertTrue(requireNotNull(attackSample.driftNanosPerSecond) in 381.0..389.0)
+        assertEquals(3, attackSample.hardwareClockDiscontinuityCount)
+        assertEquals(0, nominalSample.hardwareClockDiscontinuityCount)
+
+        val nominal = engine.evaluateTrust(status, nominalSample, location)
+        val attack = engine.evaluateTrust(status, attackSample, location)
+
+        assertEquals(TrustAssessmentSource.SIMULATION, attack.assessmentSource)
+        assertTrue(ThreatType.CLOCK_DRIFT_ANOMALY in attack.threatsDetected)
+        assertTrue(ThreatType.CLOCK_DRIFT_ANOMALY !in nominal.threatsDetected)
+        assertEquals(100f, nominal.subScores.clockStabilityScore, 0f)
+        assertEquals(35f, attack.subScores.clockStabilityScore, 0f)
+        assertEquals(6.5f, nominal.overallScore - attack.overallScore, 0.001f)
+        assertTrue(attack.intelligenceLogs.any { it.tag == "CLOCK_MONITOR" && it.message.startsWith("Simulated clock drift") })
     }
 
     @Test
@@ -148,5 +216,97 @@ class TrustScoringEngineTest {
 
         assertTrue("Estimated HDOP should be reasonable (< 3.0)", report.estimatedHdop < 3.0f)
         assertTrue("Geometry subscore should be high", report.subScores.geometryDopScore >= 80f)
+    }
+
+    @Test
+    fun testEvaluationLogReportsMediumTrustWithoutClaimingAnomaly() {
+        val status = GnssStatusData(satellites = listOf(SatelliteDetail(
+            svid = 1, constellation = ConstellationType.GPS, cn0DbHz = 22f,
+            elevationDegrees = 45f, azimuthDegrees = 90f, usedInFix = true
+        )))
+        val measurements = GnssMeasurementsData(measurements = listOf(GnssMeasurementDetail(
+            svid = 1, constellation = ConstellationType.GPS, state = 0,
+            receivedSvTimeNanos = 1L, cn0DbHz = 22.0
+        )))
+        val report = engine.evaluateTrust(status, measurements, LocationData())
+        val log = report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+
+        assertTrue(report.threatsDetected.isEmpty())
+        assertEquals(TrustLevel.MEDIUM_TRUST, report.trustLevel)
+        assertEquals(TrustLevel.MEDIUM_TRUST, report.assessedTrustLevel)
+        assertEquals(TrustAssessmentSource.RECEIVER, report.assessmentSource)
+        assertEquals("WARNING", log.severity)
+        assertTrue(log.message.contains("No anomaly triggers detected."))
+        assertTrue(log.message.contains("Calculated trust level MEDIUM TRUST"))
+    }
+
+    @Test
+    fun testEvaluationLogMarksMissingDataAsProvisional() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val status = generator.createGnssStatusFlow().first()
+        val measurements = generator.createGnssMeasurementsFlow().first()
+        val location = LocationData()
+
+        val reports = listOf(
+            engine.evaluateTrust(GnssStatusData(), GnssMeasurementsData(), location),
+            engine.evaluateTrust(GnssStatusData(), measurements, location),
+            engine.evaluateTrust(status.copy(isMock = false), GnssMeasurementsData(), location)
+        )
+        for (report in reports) {
+            val log = report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+            assertNull(report.assessedTrustLevel)
+            assertEquals("WARNING", log.severity)
+            assertTrue(log.message.contains("Insufficient GNSS data"))
+            assertTrue(log.message.contains("Provisional trust level ${report.trustLevel.name.replace('_', ' ')}"))
+        }
+    }
+
+    @Test
+    fun testSimulatedSkyCanBeAssessedWithoutRawMeasurements() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val status = generator.createGnssStatusFlow().first()
+        val measurements = generator.createGnssMeasurementsFlow().first()
+        val location = LocationData()
+
+        assertNull(TrustReport().assessedTrustLevel)
+
+        for (rawInput in listOf(GnssMeasurementsData(), measurements)) {
+            val simulated = engine.evaluateTrust(status, rawInput, location)
+            assertEquals(TrustAssessmentSource.SIMULATION, simulated.assessmentSource)
+            assertEquals(simulated.trustLevel, simulated.assessedTrustLevel)
+            assertTrue(simulated.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }.message.contains("Simulated trust level"))
+        }
+
+        val mixedReports = listOf(
+            engine.evaluateTrust(status, measurements.copy(isMock = false), location),
+            engine.evaluateTrust(status.copy(isMock = false), measurements, location)
+        )
+        for (report in mixedReports) {
+            assertNull(report.assessedTrustLevel)
+            assertTrue(report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }.message.contains("Provisional trust level"))
+        }
+    }
+
+    @Test
+    fun testEvaluationLogDistinguishesNominalAndDetectedAnomalies() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val nominal = engine.evaluateTrust(
+            generator.createGnssStatusFlow().first(),
+            generator.createGnssMeasurementsFlow().first(),
+            generator.createLocationFlow().first()
+        ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+        assertEquals("INFO", nominal.severity)
+        assertTrue(nominal.message.contains("No anomaly triggers detected."))
+        assertTrue(nominal.message.contains("Simulated trust level HIGH TRUST"))
+
+        generator.setScenario(ThreatScenario.SPOOFING_SIMULATOR)
+        val spoofing = engine.evaluateTrust(
+            generator.createGnssStatusFlow().first(),
+            generator.createGnssMeasurementsFlow().first(),
+            generator.createLocationFlow().first()
+        ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+        assertEquals("ALERT", spoofing.severity)
+        assertTrue(spoofing.message.contains("anomaly trigger(s) detected."))
+        assertTrue(spoofing.message.contains("Simulated trust level LOW TRUST"))
     }
 }

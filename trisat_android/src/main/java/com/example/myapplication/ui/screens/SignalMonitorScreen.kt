@@ -101,6 +101,7 @@ fun SignalMonitorScreen(
     val constellationFilters = listOf("ALL", "GPS", "GALILEO", "BEIDOU", "GLONASS", "QZSS", "SBAS")
 
     val satellites = gnssStatus.satellites
+    val estimatedHdop = trustReport.estimatedHdop.takeIf { satellites.isNotEmpty() && !trustReport.isReceiverDataStale }
     val filteredSatellites = remember(satellites, selectedConstellation) {
         if (selectedConstellation == "ALL") satellites
         else satellites.filter { it.constellation.name.equals(selectedConstellation, ignoreCase = true) }
@@ -128,7 +129,7 @@ fun SignalMonitorScreen(
                     HeaderStatsCard(
                         gnssStatus = gnssStatus,
                         filteredSatCount = filteredSatellites.size,
-                        estimatedHdop = trustReport.estimatedHdop,
+                        estimatedHdop = estimatedHdop,
                         isMockMode = isMockMode,
                         onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                     )
@@ -192,7 +193,7 @@ fun SignalMonitorScreen(
                 HeaderStatsCard(
                     gnssStatus = gnssStatus,
                     filteredSatCount = filteredSatellites.size,
-                    estimatedHdop = trustReport.estimatedHdop,
+                    estimatedHdop = estimatedHdop,
                     isMockMode = isMockMode,
                     onToggleMockMode = { gnssViewModel.toggleMockMode(it) }
                 )
@@ -254,7 +255,7 @@ fun SignalMonitorScreen(
 fun HeaderStatsCard(
     gnssStatus: GnssStatusData,
     filteredSatCount: Int,
-    estimatedHdop: Float,
+    estimatedHdop: Float?,
     isMockMode: Boolean,
     onToggleMockMode: (Boolean) -> Unit
 ) {
@@ -287,8 +288,9 @@ fun HeaderStatsCard(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val hdop = estimatedHdop?.let { String.format(Locale.US, "%.2f", it) } ?: "—"
                     Text(
-                        text = "Avg C/N0: ${String.format(Locale.US, "%.1f", gnssStatus.averageCn0DbHz)} dB-Hz • HDOP: ${String.format(Locale.US, "%.2f", estimatedHdop)}",
+                        text = "Avg C/N0: ${String.format(Locale.US, "%.1f", gnssStatus.averageCn0DbHz)} dB-Hz • HDOP: $hdop",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                         fontWeight = FontWeight.SemiBold
@@ -848,7 +850,7 @@ fun EarthIntelligenceLocationCard(
     location: com.example.myapplication.data.gnss.model.LocationData = com.example.myapplication.data.gnss.model.LocationData(),
     satelliteCount: Int,
     constellationCount: Int,
-    trustLevel: com.example.myapplication.data.gnss.model.TrustLevel = com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST
+    trustLevel: com.example.myapplication.data.gnss.model.TrustLevel?
 ) {
     val latStr = if (location.latitude >= 0) {
         String.format(Locale.US, "%.6f° N", location.latitude)
@@ -884,7 +886,7 @@ fun EarthIntelligenceLocationCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Authenticated Spatial Coordinates",
+                        text = "Position Coordinates",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -892,7 +894,12 @@ fun EarthIntelligenceLocationCard(
 
                 StatusBadge(
                     text = if (location.hasFix) "3D FIX LOCKED" else "NO FIX",
-                    level = if (trustLevel == com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST) StatusLevel.SECURE else StatusLevel.WARNING
+                    level = when {
+                        !location.hasFix -> StatusLevel.WARNING
+                        trustLevel == null -> StatusLevel.INFO
+                        trustLevel == com.example.myapplication.data.gnss.model.TrustLevel.HIGH_TRUST -> StatusLevel.SECURE
+                        else -> StatusLevel.WARNING
+                    }
                 )
             }
 
@@ -1063,10 +1070,12 @@ fun BandDistributionRow(band: FrequencyBandSummary) {
 
 @Composable
 fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
-    val avgAgc = gnssMeasurements.averageAgcDb
+    val avgAgc = gnssMeasurements.agcLevelsDb.takeIf { it.isNotEmpty() }?.average()
+    val hasRfInterference = avgAgc != null && avgAgc < -10.0
     val drift = gnssMeasurements.driftNanosPerSecond
     val bias = gnssMeasurements.biasNanos
     val discontinuity = gnssMeasurements.clockHardwareClockDiscontinuityCount
+    val hasClockSample = gnssMeasurements.clockTimeNanos != 0L || drift != null || bias != null
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1090,15 +1099,24 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Raw AGC & Hardware Clock Stream",
+                        text = if (gnssMeasurements.isMock) "Simulated Clock & AGC" else "Raw AGC & Hardware Clock Stream",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
                 StatusBadge(
-                    text = if (avgAgc < -10.0) "RF INTERFERENCE" else "NOMINAL AGC",
-                    level = if (avgAgc < -10.0) StatusLevel.ALERT else StatusLevel.SECURE
+                    text = when {
+                        gnssMeasurements.isMock -> "SIMULATED"
+                        avgAgc == null -> "AGC UNAVAILABLE"
+                        hasRfInterference -> "RF INTERFERENCE"
+                        else -> "NOMINAL AGC"
+                    },
+                    level = when {
+                        gnssMeasurements.isMock || avgAgc == null -> StatusLevel.INFO
+                        hasRfInterference -> StatusLevel.ALERT
+                        else -> StatusLevel.SECURE
+                    }
                 )
             }
 
@@ -1110,8 +1128,12 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
             ) {
                 RawMetricTile(
                     label = "Average AGC",
-                    value = "${String.format(Locale.US, "%.1f", avgAgc)} dB",
-                    subtitle = if (avgAgc < -10.0) "RF Suppression" else "Normal Gain",
+                    value = if (avgAgc != null) String.format(Locale.US, "%.1f dB", avgAgc) else "—",
+                    subtitle = when {
+                        avgAgc == null -> "Unavailable"
+                        hasRfInterference -> "Gain Suppression"
+                        else -> "Normal Gain"
+                    },
                     icon = Icons.Rounded.Speed,
                     modifier = Modifier.weight(1f)
                 )
@@ -1120,8 +1142,12 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
 
                 RawMetricTile(
                     label = "Clock Drift",
-                    value = if (drift != null) "${String.format(Locale.US, "%.1f", drift)} ns/s" else "-12.4 ns/s",
-                    subtitle = if (drift != null && kotlin.math.abs(drift) > 100.0) "Drift Anomaly" else "Stable Rate",
+                    value = if (drift != null) String.format(Locale.US, "%.1f ns/s", drift) else "—",
+                    subtitle = when {
+                        drift == null -> "Unavailable"
+                        kotlin.math.abs(drift) > 100.0 -> "Drift Anomaly"
+                        else -> "Stable Rate"
+                    },
                     icon = Icons.Rounded.Timer,
                     modifier = Modifier.weight(1f)
                 )
@@ -1135,7 +1161,7 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
             ) {
                 RawMetricTile(
                     label = "Clock Bias",
-                    value = if (bias != null) "${String.format(Locale.US, "%.1f", bias)} ns" else "-45.2 ns",
+                    value = if (bias != null) String.format(Locale.US, "%.1f ns", bias) else "—",
                     subtitle = "Oscillator Offset",
                     icon = Icons.Rounded.SignalCellular4Bar,
                     modifier = Modifier.weight(1f)
@@ -1145,7 +1171,7 @@ fun RawClockAndAgcCard(gnssMeasurements: GnssMeasurementsData) {
 
                 RawMetricTile(
                     label = "Discontinuities",
-                    value = "$discontinuity Counts",
+                    value = if (hasClockSample) "$discontinuity" else "—",
                     subtitle = "Clock Reset Events",
                     icon = Icons.Rounded.CheckCircle,
                     modifier = Modifier.weight(1f)

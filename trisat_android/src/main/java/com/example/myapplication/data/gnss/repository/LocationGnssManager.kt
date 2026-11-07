@@ -13,8 +13,10 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.gnss.engine.OsnmaVerificationEngine
+import com.example.myapplication.data.gnss.engine.ReceiverTrustFreshness
 import com.example.myapplication.data.gnss.engine.TrustScoringEngine
 import com.example.myapplication.data.gnss.mock.MockGnssGenerator
 import com.example.myapplication.data.gnss.model.ConstellationType
@@ -30,6 +32,9 @@ import com.example.myapplication.data.gnss.model.ThreatScenario
 import com.example.myapplication.data.gnss.model.TrustReport
 import com.example.myapplication.data.gnss.tle.Sgp4OrbitPropagator
 import com.example.myapplication.data.gnss.tle.TleDownloader
+import com.example.myapplication.data.gnss.udp.ExternalUdpMonitor
+import com.example.myapplication.data.gnss.udp.ExternalUdpStage
+import com.example.myapplication.data.gnss.udp.ExternalUdpStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,7 +55,7 @@ class LocationGnssManager(private val context: Context) {
     private val trustScoringEngine = TrustScoringEngine()
     private val osnmaEngine = OsnmaVerificationEngine()
     val tleDownloader = TleDownloader()
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
     // 3 Operating Modes: 0: INTERNAL_TLE, 1: EXTERNAL_HARDWARE, 2: SIMULATION_TLE
     private val _receiverMode = MutableStateFlow(GnssReceiverMode.INTERNAL_TLE)
@@ -93,11 +98,16 @@ class LocationGnssManager(private val context: Context) {
     private val _isMonitoringActive = MutableStateFlow(false)
     val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
 
+    private val externalUdpMonitor = ExternalUdpMonitor(elapsedMillis = SystemClock::elapsedRealtime)
+    private val _externalUdpStatus = MutableStateFlow(ExternalUdpStatus())
+    internal val externalUdpStatus: StateFlow<ExternalUdpStatus> = _externalUdpStatus.asStateFlow()
+
     private val _permissionGranted = MutableStateFlow(false)
     val permissionGranted: StateFlow<Boolean> = _permissionGranted.asStateFlow()
 
     private var mockJob: Job? = null
     private var hardwareCheckJob: Job? = null
+    private var externalUdpJob: Job? = null
 
     val bleServer = com.example.myapplication.data.gnss.ble.TrisatBleServer(context)
 
@@ -125,6 +135,8 @@ class LocationGnssManager(private val context: Context) {
     private val handler by lazy {
         Handler(Looper.getMainLooper())
     }
+
+    private val checkReceiverTrustExpiry = Runnable { refreshReceiverTrust() }
 
     // Hardware Callbacks
     private val gnssStatusCallback = object : GnssStatus.Callback() {
@@ -175,13 +187,14 @@ class LocationGnssManager(private val context: Context) {
                 )
             }
 
-            if (_receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
+            if (_isMonitoringActive.value && _receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
                 stopMockStream()
                 _isMockMode.value = false
                 val newStatus = GnssStatusData(
                     satellites = satList,
                     isMock = false,
-                    timestampMillis = System.currentTimeMillis()
+                    timestampMillis = System.currentTimeMillis(),
+                    receivedAtElapsedMillis = SystemClock.elapsedRealtime()
                 )
                 _gnssStatusData.value = newStatus
                 reevaluateTrust(newStatus = newStatus)
@@ -199,8 +212,8 @@ class LocationGnssManager(private val context: Context) {
             val clock = event.clock
             val clockTimeNanos = clock.timeNanos
             val discontinuity = clock.hardwareClockDiscontinuityCount
-            val biasNanos = if (clock.hasBiasNanos()) clock.biasNanos else 0.0
-            val driftNanosPerSecond = if (clock.hasDriftNanosPerSecond()) clock.driftNanosPerSecond else 0.0
+            val biasNanos = if (clock.hasBiasNanos()) clock.biasNanos else null
+            val driftNanosPerSecond = if (clock.hasDriftNanosPerSecond()) clock.driftNanosPerSecond else null
 
             val measurements = event.measurements
             val detailList = mutableListOf<GnssMeasurementDetail>()
@@ -235,14 +248,15 @@ class LocationGnssManager(private val context: Context) {
                 )
             }
 
-            if (_receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
+            if (_isMonitoringActive.value && _receiverMode.value == GnssReceiverMode.INTERNAL_TLE) {
                 val newMeas = GnssMeasurementsData(
                     clockTimeNanos = clockTimeNanos,
                     clockHardwareClockDiscontinuityCount = discontinuity,
                     biasNanos = biasNanos,
                     driftNanosPerSecond = driftNanosPerSecond,
                     measurements = detailList,
-                    timestampMillis = System.currentTimeMillis()
+                    timestampMillis = System.currentTimeMillis(),
+                    receivedAtElapsedMillis = SystemClock.elapsedRealtime()
                 )
                 _gnssMeasurementsData.value = newMeas
                 reevaluateTrust(newMeasurements = newMeas)
@@ -298,11 +312,11 @@ class LocationGnssManager(private val context: Context) {
         if (_receiverMode.value == GnssReceiverMode.SIMULATION_TLE) {
             updateTleSimulation()
         }
-        reevaluateTrust()
     }
 
     fun setReceiverMode(mode: GnssReceiverMode) {
         if (_receiverMode.value != mode) {
+            _trustReportData.value = TrustReport()
             _inavMessages.value = emptyList()
             _hasInavSupport.value = false
             _gnssStatusData.value = GnssStatusData()
@@ -310,6 +324,7 @@ class LocationGnssManager(private val context: Context) {
             _locationData.value = LocationData()
         }
         _receiverMode.value = mode
+        if (mode != GnssReceiverMode.EXTERNAL_HARDWARE) stopExternalUdp()
         when (mode) {
             GnssReceiverMode.INTERNAL_TLE -> {
                 stopMockStream()
@@ -329,6 +344,7 @@ class LocationGnssManager(private val context: Context) {
                 unregisterHardwareCallbacks()
                 stopMockStream()
                 _isMockMode.value = false
+                if (_isMonitoringActive.value) startExternalUdp()
             }
             GnssReceiverMode.SIMULATION_TLE -> {
                 unregisterHardwareCallbacks()
@@ -348,6 +364,8 @@ class LocationGnssManager(private val context: Context) {
     }
 
     fun updateTleSimulation() {
+        val isSimulationMode = _receiverMode.value == GnssReceiverMode.SIMULATION_TLE
+        val scenario = if (isSimulationMode) _activeScenario.value else ThreatScenario.NOMINAL
         val lat = if (_locationData.value.hasFix && _locationData.value.latitude != 0.0) _locationData.value.latitude else 40.4168
         val lon = if (_locationData.value.hasFix && _locationData.value.longitude != 0.0) _locationData.value.longitude else -3.7038
         var sats = Sgp4OrbitPropagator.propagateToSkyplot(
@@ -358,7 +376,7 @@ class LocationGnssManager(private val context: Context) {
         )
 
         // Apply Threat Scenario transformation on simulated satellites
-        when (_activeScenario.value) {
+        when (scenario) {
             ThreatScenario.SPOOFING_SIMULATOR -> {
                 sats = sats.map { it.copy(cn0DbHz = 48.5f) }
             }
@@ -373,9 +391,11 @@ class LocationGnssManager(private val context: Context) {
             isMock = true,
             timestampMillis = System.currentTimeMillis()
         )
+        if (isSimulationMode) {
+            _gnssMeasurementsData.value = mockGnssGenerator.createOrbitalSample(scenario, status.timestampMillis)
+        }
         _gnssStatusData.value = status
         reevaluateTrust(newStatus = status)
-
     }
 
     private fun propagateTleFallback() {
@@ -396,11 +416,14 @@ class LocationGnssManager(private val context: Context) {
         reevaluateTrust(newStatus = status)
     }
 
-    fun reevaluateTrust(
+    private fun reevaluateTrust(
         newStatus: GnssStatusData = _gnssStatusData.value,
         newMeasurements: GnssMeasurementsData = _gnssMeasurementsData.value,
         newLocation: LocationData = _locationData.value
     ) {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val statusExpiry = ReceiverTrustFreshness.inputExpiry(newStatus.receivedAtElapsedMillis, nowElapsed)
+        val measurementsExpiry = ReceiverTrustFreshness.inputExpiry(newMeasurements.receivedAtElapsedMillis, nowElapsed)
         val realOsnmaStatus = if (_hasInavSupport.value) {
             osnmaEngine.verifyOsnma(_inavMessages.value)
         } else null
@@ -412,12 +435,33 @@ class LocationGnssManager(private val context: Context) {
         } else realOsnmaStatus
 
         val report = trustScoringEngine.evaluateTrust(
-            gnssStatus = newStatus,
-            gnssMeasurements = newMeasurements,
+            gnssStatus = newStatus.takeIf { it.isMock || statusExpiry != null } ?: GnssStatusData(),
+            gnssMeasurements = newMeasurements.takeIf { it.isMock || measurementsExpiry != null }
+                ?: GnssMeasurementsData(),
             location = newLocation,
             osnmaOverride = osnmaOverride
         )
-        _trustReportData.value = report
+        _trustReportData.value = ReceiverTrustFreshness.track(
+            evaluated = report,
+            previous = _trustReportData.value,
+            satelliteStatusExpiry = statusExpiry,
+            rawMeasurementsExpiry = measurementsExpiry
+        )
+        refreshReceiverTrust()
+    }
+
+    fun refreshReceiverTrust() {
+        handler.removeCallbacks(checkReceiverTrustExpiry)
+        val report = _trustReportData.value
+        val expiry = report.receiverInputsExpireAtElapsedMillis ?: return
+        if (report.isReceiverDataStale) return
+
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed >= expiry) {
+            _trustReportData.value = ReceiverTrustFreshness.expire(report, nowElapsed)
+        } else {
+            handler.postDelayed(checkReceiverTrustExpiry, expiry - nowElapsed)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -487,6 +531,11 @@ class LocationGnssManager(private val context: Context) {
         if (_isMonitoringActive.value) return
         _isMonitoringActive.value = true
 
+        if (_receiverMode.value == GnssReceiverMode.EXTERNAL_HARDWARE) {
+            startExternalUdp()
+            return
+        }
+
         val permissionOk = hasLocationPermission()
 
         if (!permissionOk || _receiverMode.value == GnssReceiverMode.SIMULATION_TLE) {
@@ -509,7 +558,26 @@ class LocationGnssManager(private val context: Context) {
         _isMonitoringActive.value = false
         unregisterHardwareCallbacks()
         stopMockStream()
+        stopExternalUdp()
         hardwareCheckJob?.cancel()
+        handler.removeCallbacks(checkReceiverTrustExpiry)
+        _gnssStatusData.value = GnssStatusData()
+        _gnssMeasurementsData.value = GnssMeasurementsData()
+        _trustReportData.value = TrustReport()
+    }
+
+    private fun startExternalUdp() {
+        if (externalUdpJob?.isActive == true) return
+        _externalUdpStatus.value = ExternalUdpStatus(ExternalUdpStage.STARTING)
+        externalUdpJob = scope.launch {
+            externalUdpMonitor.observe().collect { status -> _externalUdpStatus.value = status }
+        }
+    }
+
+    private fun stopExternalUdp() {
+        externalUdpJob?.cancel()
+        externalUdpJob = null
+        _externalUdpStatus.value = ExternalUdpStatus()
     }
 
     fun setForceMockMode(enabled: Boolean) {

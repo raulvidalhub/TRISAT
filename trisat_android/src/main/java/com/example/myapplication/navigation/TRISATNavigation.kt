@@ -37,16 +37,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.window.core.layout.WindowWidthSizeClass
 import com.example.myapplication.ui.components.TRISATTopBar
 import com.example.myapplication.ui.screens.DashboardScreen
 import com.example.myapplication.ui.screens.SettingsScreen
 import com.example.myapplication.ui.screens.SignalMonitorScreen
 import com.example.myapplication.ui.screens.ThreatAnalysisScreen
+import com.example.myapplication.ui.viewmodel.GnssViewModel
 
 @Suppress("DEPRECATION")
 @Composable
 fun TRISATMainApp() {
+    val gnssViewModel: GnssViewModel = viewModel()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        gnssViewModel.gnssManager.refreshReceiverTrust()
+    }
+
     var currentScreenRoute by rememberSaveable { mutableStateOf(Screen.Dashboard.route) }
     val currentScreen = Screen.items.find { it.route == currentScreenRoute } ?: Screen.Dashboard
 

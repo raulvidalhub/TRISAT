@@ -7,6 +7,7 @@ import com.example.myapplication.data.gnss.model.IntelligenceLogEntry
 import com.example.myapplication.data.gnss.model.LocationData
 import com.example.myapplication.data.gnss.model.OsnmaStatus
 import com.example.myapplication.data.gnss.model.ThreatType
+import com.example.myapplication.data.gnss.model.TrustAssessmentSource
 import com.example.myapplication.data.gnss.model.TrustLevel
 import com.example.myapplication.data.gnss.model.TrustReport
 import com.example.myapplication.data.gnss.model.TrustSubScores
@@ -112,25 +113,40 @@ class TrustScoringEngine {
 
         val trustLevel = TrustLevel.fromScore(overallScore)
 
-        if (detectedThreats.isEmpty()) {
-            intelligenceLogs.add(
-                IntelligenceLogEntry(
-                    timestampMillis = now,
-                    severity = "SECURE",
-                    tag = "ENGINE_EVAL",
-                    message = "Multi-constellation signal verification clean. Trust level: HIGH_TRUST (${String.format(Locale.US, "%.1f", overallScore)}%)."
-                )
-            )
-        } else {
-            intelligenceLogs.add(
-                IntelligenceLogEntry(
-                    timestampMillis = now,
-                    severity = if (trustLevel == TrustLevel.LOW_TRUST) "ALERT" else "WARNING",
-                    tag = "ENGINE_EVAL",
-                    message = "Threat analysis complete. ${detectedThreats.size} anomaly trigger(s) detected. Final Score: ${String.format(Locale.US, "%.1f", overallScore)}% (${trustLevel.displayName})."
-                )
-            )
+        val hasAnomalies = detectedThreats.isNotEmpty()
+        val hasRawMeasurements = gnssMeasurements.measurements.isNotEmpty()
+        val assessmentSource = when {
+            gnssStatus.satellites.isEmpty() -> null
+            hasRawMeasurements && gnssStatus.isMock != gnssMeasurements.isMock -> null
+            gnssStatus.isMock -> TrustAssessmentSource.SIMULATION
+            hasRawMeasurements -> TrustAssessmentSource.RECEIVER
+            else -> null
         }
+        val severity = when {
+            hasAnomalies && trustLevel == TrustLevel.LOW_TRUST -> "ALERT"
+            hasAnomalies || assessmentSource == null || warnings.isNotEmpty() || trustLevel != TrustLevel.HIGH_TRUST -> "WARNING"
+            else -> "INFO"
+        }
+        val anomalySummary = if (hasAnomalies) {
+            "${detectedThreats.size} anomaly trigger(s) detected."
+        } else {
+            "No anomaly triggers detected."
+        }
+        val score = String.format(Locale.US, "%.1f", overallScore)
+        val level = trustLevel.name.replace('_', ' ')
+        val trustSummary = when (assessmentSource) {
+            TrustAssessmentSource.RECEIVER -> "Calculated trust level $level ($score%)."
+            TrustAssessmentSource.SIMULATION -> "Simulated trust level $level ($score%)."
+            null -> "Insufficient GNSS data for a complete assessment. Provisional trust level $level ($score%)."
+        }
+        intelligenceLogs.add(
+            IntelligenceLogEntry(
+                timestampMillis = now,
+                severity = severity,
+                tag = "ENGINE_EVAL",
+                message = "$anomalySummary $trustSummary"
+            )
+        )
 
         return TrustReport(
             overallScore = overallScore,
@@ -142,7 +158,8 @@ class TrustScoringEngine {
             estimatedVdop = dopResult.vdop,
             osnmaStatus = osnmaStatus,
             intelligenceLogs = intelligenceLogs,
-            timestampMillis = now
+            timestampMillis = now,
+            assessmentSource = assessmentSource
         )
     }
 
@@ -227,14 +244,15 @@ class TrustScoringEngine {
         warnings: MutableList<String>
     ): Pair<Float, List<IntelligenceLogEntry>> {
         val logs = mutableListOf<IntelligenceLogEntry>()
-        val agcList = measurements.measurements.filter { it.hasAgc }.map { it.automaticGainControlLevelDb }
+        val agcList = measurements.agcLevelsDb
 
         if (agcList.isEmpty()) {
             return Pair(90f, listOf(IntelligenceLogEntry(tag = "AGC_EVAL", severity = "INFO", message = "AGC measurement level unavailable on current chipset.")))
         }
 
         val avgAgc = agcList.average()
-        val minAgc = agcList.minOrNull() ?: 0.0
+        val minAgc = agcList.min()
+        val formattedAvg = String.format(Locale.US, "%.1f", avgAgc)
 
         var score = 100f
 
@@ -242,24 +260,33 @@ class TrustScoringEngine {
             val severityDeduction = if (avgAgc < -15.0) 80f else 50f
             score -= severityDeduction
             threats.add(ThreatType.RF_JAMMING_ELEVATED)
-            warnings.add("Elevated RF Interference: Automatic Gain Control gain suppressed (Avg AGC: ${String.format(Locale.US, "%.1f", avgAgc)} dB).")
+            val interferenceLabel = if (measurements.isMock) "Simulated RF Interference" else "Elevated RF Interference"
+            warnings.add("$interferenceLabel: Automatic Gain Control gain suppressed (Avg AGC: $formattedAvg dB).")
             logs.add(
                 IntelligenceLogEntry(
                     severity = "ALERT",
                     tag = "JAMMING_DETECTOR",
-                    message = "ALERT: AGC gain suppression indicates high in-band RF power / jamming."
+                    message = if (measurements.isMock) {
+                        "Simulated RF interference reduced receiver gain (AGC: $formattedAvg dB)."
+                    } else {
+                        "ALERT: AGC gain suppression indicates high in-band RF power / jamming."
+                    }
                 )
             )
         } else if (avgAgc < -6.0) {
             score -= 20f
-            warnings.add("Minor AGC gain decrease observed (${String.format(Locale.US, "%.1f", avgAgc)} dB). Monitoring interference.")
+            warnings.add("Minor AGC gain decrease observed ($formattedAvg dB). Monitoring interference.")
         }
 
         logs.add(
             IntelligenceLogEntry(
                 severity = "INFO",
                 tag = "AGC_EVAL",
-                message = "AGC Eval: Avg ${String.format(Locale.US, "%.1f", avgAgc)} dB over ${agcList.size} raw channels."
+                message = if (measurements.isMock) {
+                    "Simulated AGC: $formattedAvg dB average."
+                } else {
+                    "AGC Eval: Avg $formattedAvg dB over ${agcList.size} raw channels."
+                }
             )
         )
 
@@ -377,12 +404,17 @@ class TrustScoringEngine {
         if (drift != null && abs(drift) > 100.0) {
             score -= 45f
             threats.add(ThreatType.CLOCK_DRIFT_ANOMALY)
-            warnings.add("Clock Drift Anomaly: Excessive drift rate (${String.format(Locale.US, "%.1f", drift)} ns/s) detected.")
+            val driftLabel = if (measurements.isMock) "Simulated Clock Drift Anomaly" else "Clock Drift Anomaly"
+            warnings.add("$driftLabel: Excessive drift rate (${String.format(Locale.US, "%.1f", drift)} ns/s) detected.")
             logs.add(
                 IntelligenceLogEntry(
                     severity = "ALERT",
                     tag = "CLOCK_MONITOR",
-                    message = "Clock drift exceeds receiver oscillator tolerance. Possible time-spoofing injection."
+                    message = if (measurements.isMock) {
+                        "Simulated clock drift exceeds the oscillator tolerance."
+                    } else {
+                        "Clock drift exceeds receiver oscillator tolerance. Possible time-spoofing injection."
+                    }
                 )
             )
         }
@@ -393,16 +425,21 @@ class TrustScoringEngine {
                 IntelligenceLogEntry(
                     severity = "WARNING",
                     tag = "CLOCK_MONITOR",
-                    message = "Hardware clock discontinuity count: $discontinuities."
+                    message = if (measurements.isMock) {
+                        "Simulated clock discontinuity count: $discontinuities."
+                    } else {
+                        "Hardware clock discontinuity count: $discontinuities."
+                    }
                 )
             )
         }
 
+        val clockLabel = if (measurements.isMock) "Simulated Clock Stability" else "Clock Stability"
         logs.add(
             IntelligenceLogEntry(
                 severity = "INFO",
                 tag = "CLOCK_EVAL",
-                message = "Clock Stability: Drift = ${if (drift != null) String.format(Locale.US, "%.1f", drift) else "N/A"} ns/s."
+                message = "$clockLabel: Drift = ${if (drift != null) String.format(Locale.US, "%.1f", drift) else "N/A"} ns/s."
             )
         )
 

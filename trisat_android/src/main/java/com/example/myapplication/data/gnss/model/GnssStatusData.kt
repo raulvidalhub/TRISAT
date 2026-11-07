@@ -3,7 +3,8 @@ package com.example.myapplication.data.gnss.model
 data class GnssStatusData(
     val satellites: List<SatelliteDetail> = emptyList(),
     val isMock: Boolean = false,
-    val timestampMillis: Long = System.currentTimeMillis()
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val receivedAtElapsedMillis: Long? = null
 ) {
     val satelliteCount: Int
         get() = satellites.size
