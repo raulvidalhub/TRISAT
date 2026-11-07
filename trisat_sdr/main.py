@@ -86,8 +86,8 @@ def print_banner(snap: dict, web_url: str = "") -> None:
     p1 = snap["secondary_sdr"]
     br = snap["bridge"]
     print("=" * 78)
-    print(" 🛰️  TRISAT-SDR | Software-Defined Multi-Band GNSS Receiver (v1.0.0)")
-    print("    Portable Engine: macOS · GNU/Linux · Windows")
+    print(" TRISAT-SDR | Software-Defined Multi-Band GNSS Receiver (v1.0.0)")
+    print("    Portable Engine: macOS / GNU/Linux / Windows")
     print("=" * 78)
     print(f" [SDR #0 MASTER] {p0['label']}")
     print(f"    Band: {p0['band_name']} ({p0['center_freq_mhz']} MHz) |Fs: {p0['sample_rate_msps']} MS/s | Bias-T: ON | CLKOUT: 10MHz")
@@ -142,12 +142,12 @@ def main() -> int:
 
             line = (
                 f"[Epoch {snap['epoch']:04d}] Mode: {pvt['solution_mode']} | "
-                f"Pos: ({pvt['latitude_deg']:.6f}, {pvt['longitude_deg']:.6f}) ±{pvt['horizontal_accuracy_m']:.2f}m | "
+                f"Pos: ({pvt['latitude_deg']:.6f}, {pvt['longitude_deg']:.6f}) +/-{pvt['horizontal_accuracy_m']:.2f}m | "
                 f"Sats: {pvt['num_sats_used']} (OSNMA:{pvt['osnma_authenticated_sats']} HAS:{pvt['has_corrected_sats']})"
             )
             print(line)
             if latest_frm:
-                print(f"   ↳ TX Frame: {latest_frm['nmea_custom_sentence'][:76]}...")
+                print(f"   -> TX Frame: {latest_frm['nmea_custom_sentence'][:76]}...")
 
             if target_epochs > 0 and snap["epoch"] >= target_epochs:
                 break
