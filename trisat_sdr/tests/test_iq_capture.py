@@ -108,7 +108,7 @@ class TestIqCaptureReader(unittest.TestCase):
     def test_secondary_band_change_keeps_capture_position(self):
         pairs = [(i, -i) for i in range(1024 + 1024 + 1)]
         self.capture.write_bytes(b"".join(struct.pack("<hh", *pair) for pair in pairs))
-        config = ReceiverConfig()
+        config = ReceiverConfig(doppler_search_max_hz=0)
         config.secondary_sdr.driver = "file"
         config.secondary_sdr.iq_file_path = str(self.capture)
         config.secondary_sdr.iq_format = "int16"
@@ -129,10 +129,11 @@ class TestIqCaptureReader(unittest.TestCase):
             [complex(i, q) / 32768 for i, q in pairs],
         )
 
-    def test_short_capture_is_supported_during_acquisition(self):
+    def test_short_non_e1b_capture_is_supported_during_acquisition(self):
         self.capture.write_bytes(bytes((1, 2, 3, 4)))
         config = ReceiverConfig()
         config.primary_sdr.driver = "file"
+        config.primary_sdr.band_id = "GAL_E6"
         config.primary_sdr.iq_file_path = str(self.capture)
         config.dual_sdr_enabled = False
         receiver = TrisatSdrReceiver(config)

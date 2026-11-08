@@ -2,12 +2,15 @@
 GNSS PRN Spreading Code & Subcarrier Generators for TRISAT-SDR.
 Implements:
   - GPS L1 C/A Gold codes (ICD-GPS-200, 1023 chips, BPSK(1))
-  - Galileo E1B & E1C codes + CBOC(6,1,1/11) subcarrier (Galileo OS SIS ICD, 4092 chips)
+  - Galileo E1-B memory codes + CBOC(6,1,1/11) subcarrier (Galileo OS SIS ICD, 4092 chips)
   - Galileo E5a-I/Q & E5b-I/Q LFSR codes + AltBOC(15,10) subcarrier (10230 chips)
   - Galileo E6B & E6C codes (Galileo E6 HAS SIS ICD, 5115 chips, BPSK(5))
 """
 
 import math
+from fractions import Fraction
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 try:
@@ -69,12 +72,35 @@ def _lfsr_sequence(length: int, poly_taps: Tuple[int, ...], seed: int, width: in
     return chips
 
 
+GALILEO_E1_SVIDS = range(1, 37)  # OS SIS ICD §3.6.1
+GALILEO_E1_CHIP_RATE = 1_023_000
+GALILEO_E1_PERIOD_MS = 4
+
+
+@lru_cache(maxsize=1)
+def _galileo_e1b_hex_codes() -> Dict[int, str]:
+    path = Path(__file__).with_name("C7_E1B.txt")
+    return {
+        int(label.rsplit("_", 1)[1]): code
+        for label, code in (line.split(";") for line in path.read_text(encoding="ascii").splitlines())
+    }
+
+
 def generate_galileo_e1_code(svid: int, component: str = "B") -> List[int]:
     """
-    Generates a 4092-chip Galileo E1B (Data) or E1C (Pilot) primary spreading code (+1, -1)
-    for SVID 1..36.
+    Returns the official E1-B memory code or the legacy simulated E1-C code.
     """
-    comp_offset = 0 if component.upper() == "B" else 100
+    if component.upper() == "B":
+        if svid not in GALILEO_E1_SVIDS:
+            raise ValueError(f"Galileo E1-B SVID must be in 1..36, got {svid}")
+        # Annex C encodes the first chip in the most significant bit.
+        return [
+            1 - 2 * ((int(digit, 16) >> shift) & 1)
+            for digit in _galileo_e1b_hex_codes()[svid]
+            for shift in (3, 2, 1, 0)
+        ]
+
+    comp_offset = 100
     seed1 = ((svid * 2654435761 + comp_offset) & 0x3FFF) | 1
     seed2 = (((svid + 37) * 2246822519 + comp_offset) & 0x3FFF) | 1
     seq1 = _lfsr_sequence(4092, (1, 6, 10, 14), seed1, width=14)
@@ -135,23 +161,22 @@ def sample_code_waveform(
 
     elif band_id == "GAL_E1":
         chips = generate_galileo_e1_code(svid, component=component)
-        code_rate = 1.023e6
-        code_len = 4092
+        # Exact sample-to-chip ratio keeps samples on subcarrier boundaries stable.
+        samples_to_chips = GALILEO_E1_CHIP_RATE / Fraction(str(sample_rate_hz))
+        numerator, denominator = samples_to_chips.as_integer_ratio()
         # CBOC(6,1,1/11) weights: alpha = sqrt(10/11), beta = sqrt(1/11)
         alpha = math.sqrt(10.0 / 11.0)
         beta = math.sqrt(1.0 / 11.0)
         sign = 1.0 if component.upper() == "B" else -1.0  # E1B uses in-phase BOC(6,1), E1C anti-phase
         samples = []
         for n in range(num_samples):
-            chip_pos = (n * code_rate / sample_rate_hz)
-            chip_idx = int(chip_pos) % code_len
-            frac = chip_pos - int(chip_pos)
+            chip_idx, phase = divmod(n * numerator, denominator)
             # BOC(1,1): 2 sub-intervals per chip
-            boc11 = 1.0 if (int(frac * 2.0) % 2 == 0) else -1.0
+            boc11 = 1.0 if (phase * 2 // denominator) % 2 == 0 else -1.0
             # BOC(6,1): 12 sub-intervals per chip
-            boc61 = 1.0 if (int(frac * 12.0) % 2 == 0) else -1.0
+            boc61 = 1.0 if (phase * 12 // denominator) % 2 == 0 else -1.0
             subcarrier = alpha * boc11 + sign * beta * boc61
-            samples.append(chips[chip_idx] * subcarrier)
+            samples.append(chips[chip_idx % len(chips)] * subcarrier)
         return samples
 
     elif band_id in ("GAL_E5A", "GAL_E5B", "GAL_E5_ALTBOC"):

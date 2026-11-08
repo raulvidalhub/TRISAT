@@ -1,2 +1,3 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+trisat_sdr/dsp/C7_E1B.txt -text whitespace=cr-at-eol

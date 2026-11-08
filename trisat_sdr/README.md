@@ -39,6 +39,16 @@ The current SDR pipeline produces simulated navigation frames and positioning re
 
 When using `SdrChannelConfig(driver="file", iq_file_path=..., iq_format=...)`, each stream reads a capture once from its first I/Q pair. Read sizes may vary. The last block can be shorter than requested, and later reads return an empty list. The reader discards an incomplete trailing pair and reports file access or format errors. Construct a new stream to replay from the beginning.
 
+### Galileo E1-B acquisition from IQ
+
+The PCPS search for `GAL_E1` uses the Galileo E1-B data component. For a file source it searches SVIDs 1–36 with the official 4092-chip memory codes. It correlates a 4 ms CBOC replica against 8 ms of complex IQ, so the search can find a complete symbol even if the input starts between symbol boundaries. It reports delay relative to the input window and Doppler on the configured search grid. A detection requires both a peak above the noise floor and a 3 dB margin over distinct code phases. If several codes pass, the search checks each weaker candidate again after subtracting fitted replicas of stronger detections from that same window. This reduces false locks from cross-correlation without consuming more of the recording. NumPy speeds up a full search.
+
+Configure `ReceiverConfig.primary_sdr` with `driver="file"`, `band_id="GAL_E1"`, the capture's `iq_file_path`, `iq_format`, and `sample_rate_hz`. Call `TrisatSdrReceiver(config).initialize_acquisition()` and inspect the results with `acquired=True`. The capture must contain at least 8 ms of interleaved complex samples centered on 1575.42 MHz. Acquisition sensitivity, front-end filtering, clock error, and false alarms on live RF remain to be measured. The reported C/N₀ is a heuristic estimate. Live IQ streaming and downstream tracking and navigation are outside this acquisition validation.
+
+`dsp/C7_E1B.txt` is the unmodified E1-B attachment from Annex C of the Galileo OS SIS ICD, Issue 2.2, November 2025, © European Union 2025. See the original document's terms of use, disclaimers and Annex H in `EUSPA/PDFs/Galileo_OS_SIS_ICD_in_force.pdf`. [Galileo OS SIS ICD](https://www.gsc-europa.eu/sites/default/files/sites/all/files/Galileo_OS_SIS_ICD_in_force.pdf)
+
+Run the hardware-free tests from the repository root with `python -m unittest trisat_sdr.tests.test_galileo_e1b_acquisition -v`. They check the Annex C attachment and generate IQ independently from the search code with known PRNs, delay, carrier Doppler, symbol polarity changes and seeded noise. The receiver test uses a raw float32 IQ file.
+
 ## 📡 Telemetry Bridge to TRISAT (`trisat_ios` / macOS / `trisat_android`)
 
 `TRISAT-SDR` sends simulated frames and telemetry as JSON with `"source": "simulated"`. For a dedicated legacy test client, pass `--emit-legacy-simulation` to also send NMEA and custom navigation sentences. Legacy sentences have no provenance field, and GGA reports no real fix. Supported transports:
