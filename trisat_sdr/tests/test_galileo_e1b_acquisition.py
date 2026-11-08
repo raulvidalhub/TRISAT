@@ -88,6 +88,30 @@ class TestGalileoE1bAcquisition(unittest.TestCase):
                 result = engine.acquire_satellite(samples, "GAL_E1", "GALILEO", svid, 4092)
                 self.assertFalse(result.acquired)
 
+    def test_residual_peak_must_confirm_the_original_delay_and_doppler(self):
+        engine = acquisition.PcpsAcquisitionEngine(4_000_000, 15_000)
+
+        def peak(svid, doppler, phase, metric):
+            return acquisition.AcquisitionResult("GAL_E1", "GALILEO", svid, True, doppler, phase, 0, 0, metric)
+
+        cases = (
+            (10_266, -14_000, 13_394, False),  # The false E03 in the E01 control recording.
+            (10_266, 9_250, 13_394, False),
+            (10_266, -14_000, 10_266, False),
+            (15_998, 9_500, 1, True),  # A neighboring bin and a delay across the code boundary.
+        )
+        for phase, confirmed_doppler, confirmed_phase, expected in cases:
+            with self.subTest(phase=phase, confirmed_doppler=confirmed_doppler, confirmed_phase=confirmed_phase):
+                initial = [peak(1, -750, 2_919, 34.23), peak(3, 9_250, phase, 14.78)]
+                confirmed = peak(3, confirmed_doppler, confirmed_phase, 14.49)
+                with (
+                    patch.object(acquisition, "GALILEO_E1_SVIDS", (1, 3)),
+                    patch.object(engine, "acquire_satellite", side_effect=[*initial, confirmed]),
+                    patch.object(engine, "_subtract_e1b_signal"),
+                ):
+                    results = engine.acquire_galileo_e1b([0j] * engine.e1b_window_samples)
+                self.assertEqual([result.svid for result in results if result.acquired], [1, 3] if expected else [1])
+
     def test_receiver_rejects_e01_cross_peak_but_keeps_a_weaker_e02(self):
         rate = 4_000_000
         e01 = make_iq(1, rate, 2919, -620, noise_std=0)

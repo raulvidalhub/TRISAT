@@ -126,10 +126,22 @@ class PcpsAcquisitionEngine:
         residual = list(iq_samples[:self.e1b_window_samples])
         for rank, index in enumerate(candidates):
             if rank > 0:
-                results[index] = search(residual, results[index].svid)
+                original = results[index]
+                confirmed = search(residual, original.svid)
+                # A different peak in the residual does not confirm the original detection.
+                confirmed.acquired = confirmed.acquired and self._e1b_peaks_match(original, confirmed)
+                results[index] = confirmed
             if results[index].acquired and rank < len(candidates) - 1:
                 self._subtract_e1b_signal(residual, results[index])
         return results
+
+    def _e1b_peaks_match(self, original: AcquisitionResult, confirmed: AcquisitionResult) -> bool:
+        period = self.e1b_window_samples // 2
+        phase_delta = abs(original.code_phase_samples - confirmed.code_phase_samples)
+        phase_delta = min(phase_delta, period - phase_delta)
+        chip_samples = math.ceil(self.sample_rate_hz / GALILEO_E1_CHIP_RATE)
+        doppler_delta = abs(original.doppler_hz - confirmed.doppler_hz)
+        return phase_delta <= chip_samples and doppler_delta <= self.doppler_step_hz
 
     def _subtract_e1b_signal(self, residual: List[complex], result: AcquisitionResult) -> None:
         """Fit the detected code and one complex gain per symbol to the search window."""
