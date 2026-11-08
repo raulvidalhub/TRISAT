@@ -24,7 +24,7 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     private var fileDescriptor: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var rfcommChannel: IOBluetoothRFCOMMChannel?
-    private var incomingLineBuffer: String = ""
+    private var rfcommFramer = F9pTelemetry.SerialFramer()
     private var watchdogTimer: Timer?
     private var autoConnectTimer: Timer?
     private var lastDataReceivedTime: Date = Date()
@@ -225,6 +225,7 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if status == kIOReturnSuccess, let ch = channel {
+                    self.rfcommFramer = F9pTelemetry.SerialFramer()
                     self.rfcommChannel = ch
                     self.isConnected = true
                     self.connectedPortName = devName
@@ -252,10 +253,23 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
     // MARK: - IOBluetoothRFCOMMChannelDelegate
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!, data dataPointer: UnsafeMutableRawPointer!, length dataLength: Int) {
         guard dataLength > 0, let ptr = dataPointer else { return }
-        let data = Data(bytes: ptr, count: dataLength)
-        if let text = String(data: data, encoding: .ascii) ?? String(data: data, encoding: .utf8) {
-            DispatchQueue.main.async {
-                self.onLineReceived?(text)
+        let bytes = Array(UnsafeRawBufferPointer(start: ptr, count: dataLength))
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.rfcommChannel === rfcommChannel else { return }
+            self.deliver(self.rfcommFramer.feed(bytes))
+        }
+    }
+
+    private func deliver(_ events: [F9pTelemetry.SerialFramer.Event]) {
+        for event in events {
+            switch event {
+            case .line(let sentence):
+                onLineReceived?(sentence)
+            case .page(let page):
+                onInavFrameReceived?(GalileoINavMessage(
+                    svid: page.svid, submessageId: page.wordType, data: page.data,
+                    status: 0, timestamp: Date(), band: page.band
+                ))
             }
         }
     }
@@ -357,7 +371,7 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
         }
 
         // Background DispatchSource for non-blocking serial reading with complete line & binary UBX buffering
-        var rawDataBuffer = Data()
+        var framer = F9pTelemetry.SerialFramer()
         let queue = DispatchQueue(label: "com.trisat.macserial", qos: .userInitiated)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
 
@@ -367,82 +381,9 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
             let bytesRead = read(fd, &buffer, buffer.count)
             if bytesRead > 0 {
                 self.lastDataReceivedTime = Date()
-                rawDataBuffer.append(buffer, count: bytesRead)
-
-                // Multiplexed parsing loop: handles ASCII NMEA sentences and binary UBX packets
-                while !rawDataBuffer.isEmpty {
-                    // 1. Check for NMEA start '$' (0x24)
-                    if rawDataBuffer[0] == 0x24 {
-                        if let newlineIdx = rawDataBuffer.firstIndex(of: 0x0A) { // '\n'
-                            let lineRange = 0..<(newlineIdx + 1)
-                            let lineData = rawDataBuffer.subdata(in: lineRange)
-                            rawDataBuffer.removeSubrange(lineRange)
-                            if let line = String(data: lineData, encoding: .ascii) ?? String(data: lineData, encoding: .utf8) {
-                                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !trimmed.isEmpty {
-                                    DispatchQueue.main.async {
-                                        self.onLineReceived?(trimmed)
-                                    }
-                                }
-                            }
-                            continue
-                        } else {
-                            // Incomplete NMEA line, wait for next read (cap buffer if excessively large)
-                            if rawDataBuffer.count > 4096 {
-                                rawDataBuffer.removeFirst()
-                            }
-                            break
-                        }
-                    }
-
-                    // 2. Check for ESP32 Bridge log lines: '[' (0x5B) e.g. [GALILEO I/NAV] E02 (WT 21): <hex>
-                    if rawDataBuffer[0] == 0x5B {
-                        if let newlineIdx = rawDataBuffer.firstIndex(of: 0x0A) { // '\n'
-                            let lineRange = 0..<(newlineIdx + 1)
-                            let lineData = rawDataBuffer.subdata(in: lineRange)
-                            rawDataBuffer.removeSubrange(lineRange)
-                            if let line = String(data: lineData, encoding: .ascii) ?? String(data: lineData, encoding: .utf8) {
-                                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if trimmed.contains("[GALILEO I/NAV]") {
-                                    self.parseEsp32InavLogLine(trimmed)
-                                }
-                            }
-                            continue
-                        } else {
-                            if rawDataBuffer.count > 4096 {
-                                rawDataBuffer.removeFirst()
-                            }
-                            break
-                        }
-                    }
-
-                    // 3. Check for UBX Sync: 0xB5 0x62
-                    if rawDataBuffer.count >= 2 && rawDataBuffer[0] == 0xB5 && rawDataBuffer[1] == 0x62 {
-                        if rawDataBuffer.count >= 6 {
-                            let len = Int(rawDataBuffer[4]) | (Int(rawDataBuffer[5]) << 8)
-                            let totalUbxLen = 6 + len + 2
-                            if rawDataBuffer.count >= totalUbxLen {
-                                let ubxPacket = rawDataBuffer.subdata(in: 0..<totalUbxLen)
-                                rawDataBuffer.removeSubrange(0..<totalUbxLen)
-
-                                self.processUbxPacket(ubxPacket)
-                                continue
-                            } else {
-                                // Wait for complete UBX packet
-                                break
-                            }
-                        } else {
-                            // Wait for header
-                            break
-                        }
-                    }
-
-                    // 4. Leading byte is neither '$', '[', nor 0xB5 -> Skip junk/alignment byte
-                    if let nextStart = rawDataBuffer.indices.first(where: { rawDataBuffer[$0] == 0x24 || rawDataBuffer[$0] == 0x5B || rawDataBuffer[$0] == 0xB5 }) {
-                        rawDataBuffer.removeSubrange(0..<nextStart)
-                    } else {
-                        rawDataBuffer.removeAll()
-                    }
+                let events = framer.feed(Array(buffer.prefix(bytesRead)))
+                DispatchQueue.main.async { [weak self] in
+                    self?.deliver(events)
                 }
             } else if bytesRead == 0 {
                 // End-Of-File: receiver disconnected or port closed
@@ -467,104 +408,6 @@ class MacSerialPortManager: NSObject, ObservableObject, IOBluetoothRFCOMMChannel
         source.resume()
         self.readSource = source
         return true
-    }
-
-    private func processUbxPacket(_ packet: Data) {
-        guard packet.count >= 8 else { return }
-        let msgClass = packet[2]
-        let msgId = packet[3]
-        let len = Int(packet[4]) | (Int(packet[5]) << 8)
-        guard packet.count >= 6 + len + 2 else { return }
-
-        // UBX Checksum Verification
-        var ckA: UInt8 = 0
-        var ckB: UInt8 = 0
-        for i in 2..<(6 + len) {
-            ckA = ckA &+ packet[i]
-            ckB = ckB &+ ckA
-        }
-        guard ckA == packet[6 + len] && ckB == packet[6 + len + 1] else { return }
-
-        // UBX-RXM-SFRBX (Class: 0x02, ID: 0x13)
-        if msgClass == 0x02 && msgId == 0x13 && len >= 8 {
-            let gnssId = packet[6]
-            let svId = packet[7]
-            let sigId = packet[8]
-            let numWords = Int(packet[10])
-
-            // Galileo (gnssId == 2) on E1-B (sigId == 1) or E5b-I (sigId == 5) or E1 (sigId == 0)
-            if gnssId == 2 && (sigId == 1 || sigId == 5 || sigId == 0) && numWords >= 8 {
-                let dataStart = 14
-                let dataEnd = min(6 + len, dataStart + numWords * 4)
-                let frameBytes = [UInt8](packet[dataStart..<dataEnd])
-
-                // Galileo Word Type in even half-page (bits 2..7 of first 32-bit word)
-                var wordType = 1
-                if frameBytes.count >= 4 {
-                    let w0 = UInt32(frameBytes[0]) | (UInt32(frameBytes[1]) << 8) | (UInt32(frameBytes[2]) << 16) | (UInt32(frameBytes[3]) << 24)
-                    wordType = Int((w0 >> 2) & 0x3F)
-                }
-
-                let bandName = (sigId == 5) ? "E5b-I" : "E1-B"
-                let inavMsg = GalileoINavMessage(
-                    svid: Int(svId),
-                    submessageId: wordType > 0 ? wordType : 1,
-                    data: Data(frameBytes),
-                    status: 0,
-                    timestamp: Date(),
-                    band: bandName
-                )
-
-                let hexStr = frameBytes.prefix(30).map { String(format: "%02X", $0) }.joined()
-                let galinavLine = "$GALINAV,\(svId),\(wordType > 0 ? wordType : 1),\(hexStr),827BB238C8*3F"
-
-                DispatchQueue.main.async { [weak self] in
-                    self?.onInavFrameReceived?(inavMsg)
-                    self?.onLineReceived?(galinavLine)
-                }
-            }
-        }
-    }
-
-    private func parseEsp32InavLogLine(_ line: String) {
-        // Line format: [GALILEO I/NAV] E02 (WT 21): 55559500555555555555555500402C56...
-        guard let closeBracket = line.range(of: "]"),
-              let wtIdx = line.range(of: "(WT "),
-              let colonIdx = line.range(of: "): ") else { return }
-
-        let svidSub = line[closeBracket.upperBound..<wtIdx.lowerBound]
-        let svidDigits = svidSub.filter { $0.isNumber }
-        let wtSub = line[wtIdx.upperBound..<colonIdx.lowerBound]
-        let wtDigits = wtSub.filter { $0.isNumber }
-        let hexStr = String(line[colonIdx.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let svid = Int(svidDigits), let wt = Int(wtDigits), !hexStr.isEmpty else { return }
-
-        var rawBytes = [UInt8]()
-        var sIndex = hexStr.startIndex
-        while sIndex < hexStr.endIndex {
-            let eIndex = hexStr.index(sIndex, offsetBy: 2, limitedBy: hexStr.endIndex) ?? hexStr.endIndex
-            if let b = UInt8(hexStr[sIndex..<eIndex], radix: 16) {
-                rawBytes.append(b)
-            }
-            sIndex = eIndex
-        }
-
-        let inavMsg = GalileoINavMessage(
-            svid: svid,
-            submessageId: wt,
-            data: Data(rawBytes),
-            status: 0,
-            timestamp: Date(),
-            band: "E1-B"
-        )
-
-        let galinavSentence = "$GALINAV,\(svid),\(wt),\(hexStr),827BB238C8*3F"
-
-        DispatchQueue.main.async { [weak self] in
-            self?.onInavFrameReceived?(inavMsg)
-            self?.onLineReceived?(galinavSentence)
-        }
     }
 
     func closePort() {

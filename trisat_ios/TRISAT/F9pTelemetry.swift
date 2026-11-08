@@ -11,36 +11,114 @@ enum F9pTelemetry {
     }
 
     static func decodeDatagram(_ data: Data) -> Page? {
-        guard data.count == 52 else { return nil }
-        let bytes = Array(data)
-        guard bytes.prefix(10).elementsEqual([0x52, 0x41, 0x57, 0x3A, 0xB5, 0x62, 2, 0x13, 40, 0])
-        else { return nil }
+        guard data.count == 52, data.starts(with: rawPrefix) else { return nil }
+        return decodeUbx(Array(data.dropFirst(rawPrefix.count)))
+    }
 
+    private static func hasUbxChecksum(_ bytes: [UInt8]) -> Bool {
         var a: UInt8 = 0
         var b: UInt8 = 0
-        for byte in bytes[6..<50] {
+        for byte in bytes.dropFirst(2).dropLast(2) {
             a = a &+ byte
             b = b &+ a
         }
-        guard bytes[50] == a, bytes[51] == b, bytes[10] == 2,
-              (1...36).contains(bytes[11]), bytes[14] == 8, bytes[16] == 2
+        return bytes[bytes.count - 2] == a && bytes[bytes.count - 1] == b
+    }
+
+    private static func decodeUbx(_ bytes: [UInt8]) -> Page? {
+        guard bytes.count == 48,
+              bytes.prefix(6).elementsEqual([0xB5, 0x62, 2, 0x13, 40, 0]),
+              bytes[6] == 2, (1...36).contains(bytes[7]), bytes[10] == 8, bytes[12] == 2,
+              hasUbxChecksum(bytes)
         else { return nil }
 
         let band: String
-        switch bytes[12] {
+        switch bytes[8] {
         case 1: band = "E1-B"
         case 5: band = "E5b-I"
         default: return nil
         }
 
         var pages: [UInt8] = []
-        for word in stride(from: 18, to: 50, by: 4) {
-            let first = word + (word == 30 || word == 46 ? 1 : 0)
+        for word in stride(from: 14, to: 46, by: 4) {
+            let first = word + (word == 26 || word == 42 ? 1 : 0)
             pages.append(contentsOf: bytes[first..<(word + 4)].reversed())
         }
         let wordType = Int(pages[0] & 0x3F)
         guard validPage(pages) else { return nil }
-        return Page(svid: Int(bytes[11]), wordType: wordType, data: Data(pages), band: band)
+        return Page(svid: Int(bytes[7]), wordType: wordType, data: Data(pages), band: band)
+    }
+
+    struct SerialFramer {
+        enum Event {
+            case line(String)
+            case page(Page)
+        }
+
+        private var pending: [UInt8] = []
+
+        mutating func feed(_ bytes: [UInt8]) -> [Event] {
+            pending.append(contentsOf: bytes)
+            var events: [Event] = []
+            var start = 0
+            while start < pending.count {
+                switch pending[start] {
+                case 0x24, 0x5B: // NMEA, decoded ESP32 sentences, or ESP32 diagnostics
+                    let delimiter = pending[(start + 1)...].firstIndex {
+                        $0 == 0x0A || $0 == 0x24 || $0 == 0xB5
+                    }
+                    guard let newline = delimiter else {
+                        if pending.count - start <= 1024 {
+                            pending.removeFirst(start)
+                            return events
+                        }
+                        start += 1
+                        continue
+                    }
+                    guard pending[newline] == 0x0A else {
+                        start = newline
+                        continue
+                    }
+                    if pending[start] == 0x24, newline - start <= 1024,
+                       let line = String(bytes: pending[start..<newline], encoding: .ascii) {
+                        let sentence = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let page = decodeSentence(sentence) { events.append(.page(page)) }
+                        events.append(.line(sentence))
+                    }
+                    start = newline + 1
+                case 0xB5:
+                    let remaining = pending.count - start
+                    guard remaining >= 2 else {
+                        pending.removeFirst(start)
+                        return events
+                    }
+                    guard pending[start + 1] == 0x62 else {
+                        start += 1
+                        continue
+                    }
+                    guard remaining >= 6 else {
+                        pending.removeFirst(start)
+                        return events
+                    }
+                    let length = Int(pending[start + 4]) | (Int(pending[start + 5]) << 8)
+                    guard remaining >= length + 8 else {
+                        pending.removeFirst(start)
+                        return events
+                    }
+                    let packet = Array(pending[start..<(start + length + 8)])
+                    guard hasUbxChecksum(packet) else {
+                        start += 1
+                        continue
+                    }
+                    if let page = decodeUbx(packet) { events.append(.page(page)) }
+                    start += packet.count
+                default:
+                    start += 1
+                }
+            }
+            pending.removeAll(keepingCapacity: true)
+            return events
+        }
     }
 
     static func decodeSentence(_ line: String) -> Page? {

@@ -80,7 +80,7 @@ class GalileoUbxDecoder {
     ckB += ckA;
   }
 
-  static uint32_t bit(const uint8_t* bytes, size_t index) {
+  static uint32_t pageBit(const uint8_t* bytes, size_t index) {
     return (bytes[index / 8] >> (7 - index % 8)) & 1;
   }
 
@@ -102,12 +102,12 @@ class GalileoUbxDecoder {
 
     uint32_t crc = 0;
     for (size_t i = 0; i < 196; ++i) {
-      const uint32_t feedback = (crc >> 23) ^ bit(page.bytes, i < 114 ? i : i + 6);
+      const uint32_t feedback = (crc >> 23) ^ pageBit(page.bytes, i < 114 ? i : i + 6);
       crc = (crc << 1) & 0xFFFFFF;
       if (feedback) crc ^= 0x864CFB;
     }
     uint32_t received = 0;
-    for (size_t i = 202; i < 226; ++i) received = (received << 1) | bit(page.bytes, i);
+    for (size_t i = 202; i < 226; ++i) received = (received << 1) | pageBit(page.bytes, i);
     if (crc != received) return false;
 
     page.svid = payload[1];

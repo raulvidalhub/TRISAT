@@ -36,6 +36,7 @@ jobs:
         if: matrix.project == 'trisat_mac/TRISAT.xcodeproj'
         run: |
           tests=trisat_hw/zed_f9p/tests
+          swiftc -typecheck trisat_ios/TRISAT/F9pTelemetry.swift trisat_ios/TRISAT/GalileoINavMessage.swift trisat_ios/TRISAT/MacSerialPortManager.swift
           swiftc trisat_ios/TRISAT/F9pTelemetry.swift "$tests/F9pProbe.swift" -o "$RUNNER_TEMP/f9p-swift"
           clang++ -std=c++11 -Wall -Wextra -Werror -I trisat_hw/esp32/esp32_hybrid_bridge "$tests/f9p_probe.cpp" -o "$RUNNER_TEMP/f9p-cpp"
           python3 -m trisat_hw.zed_f9p.tests.check_f9p_consumers "$RUNNER_TEMP/f9p-swift" "$RUNNER_TEMP/f9p-cpp"

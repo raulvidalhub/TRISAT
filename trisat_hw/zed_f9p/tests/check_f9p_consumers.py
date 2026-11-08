@@ -70,6 +70,25 @@ class TestF9pConsumers(unittest.TestCase):
             ["-", "-", expected],
         )
 
+    def test_mixed_serial_stream_and_fragmentation(self):
+        wt, even, odd = E1B_PAGES[0]
+        frame = ubx(sfrbx(even, odd))
+        bad = frame[:-1] + bytes([frame[-1] ^ 1])
+        nmea = sentence("$GNGGA,103001.00,4025.0065,N,00342.2274,W,0,0,,,,,,,")
+        esp = sentence(f"$GALINAV,2,{wt},{even + odd},E1-B")
+        expected = f"2|{wt}|{even + odd}|E1-B"
+        fragments = [
+            b"[ESP32 diagnostic]\n" + frame[:1],
+            frame[1:19],
+            frame[19:] + bad + (nmea + "\r\n").encode(),
+            esp[:20].encode(),
+            (esp[20:] + "\n").encode(),
+        ]
+        self.assertEqual(
+            exchange(SWIFT, ["serial " + f.hex() for f in fragments]),
+            ["-", "-", expected + ";" + nmea, "-", expected + ";" + esp],
+        )
+
     def test_ssp_is_outside_the_page_crc(self):
         wt, even, odd = E1B_PAGES[0]
         payload = bytearray(sfrbx(even, odd))
