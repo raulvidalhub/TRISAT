@@ -37,6 +37,8 @@ python3 trisat_sdr/main.py --headless
 
 The current SDR pipeline produces simulated navigation frames and positioning results. The dashboard, CLI and JSON telemetry identify them as simulated, and the OSNMA Annex A self-test is reported separately from any received-message verification. IQ-file input does not make downstream navigation results measured.
 
+When using `SdrChannelConfig(driver="file", iq_file_path=..., iq_format=...)`, each stream reads a capture once from its first I/Q pair. Read sizes may vary. The last block can be shorter than requested, and later reads return an empty list. The reader discards an incomplete trailing pair and reports file access or format errors. Construct a new stream to replay from the beginning.
+
 ## 📡 Telemetry Bridge to TRISAT (`trisat_ios` / macOS / `trisat_android`)
 
 `TRISAT-SDR` sends simulated frames and telemetry as JSON with `"source": "simulated"`. For a dedicated legacy test client, pass `--emit-legacy-simulation` to also send NMEA and custom navigation sentences. Legacy sentences have no provenance field, and GGA reports no real fix. Supported transports:

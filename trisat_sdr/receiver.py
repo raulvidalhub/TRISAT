@@ -55,6 +55,7 @@ class TrisatSdrReceiver:
         )
 
         self.tracking_channels: List[GnssTrackingChannel] = []
+        self._primary_channel_count = 0
         self.latest_tracking: List[TrackingTelemetry] = []
         self.latest_acquisitions: List[AcquisitionResult] = []
         self.decoded_frames: List[DecodedGnssFrame] = []
@@ -103,6 +104,8 @@ class TrisatSdrReceiver:
         candidate_sats = list(SIMULATED_SATELLITES.get(p_band, []))
         if p_band == "GAL_E1" and self.config.also_acquire_gps_l1_on_primary:
             candidate_sats.extend(SIMULATED_SATELLITES["GPS_L1"])
+        if not iq_primary:
+            candidate_sats.clear()
 
         for const, svid, sim_fd, sim_delay, sim_cn0 in candidate_sats:
             b_id = "GPS_L1" if const == "GPS" else p_band
@@ -129,13 +132,16 @@ class TrisatSdrReceiver:
             )
             ch_id += 1
 
+        primary_channel_count = len(channels)
+
         # 2. Secondary SDR (#1): Galileo E6 (HAS) or E5a / E5b / E5 AltBOC
         if self.config.dual_sdr_enabled:
             iq_sec = self.secondary_stream.read_iq_samples(1024)
             self.secondary_spectrum_db = self.secondary_stream.compute_power_spectrum_db(iq_sec)
             s_band = self.config.secondary_sdr.band_id
             s_spec = GNSS_BANDS[s_band]
-            for const, svid, sim_fd, sim_delay, sim_cn0 in SIMULATED_SATELLITES.get(s_band, []):
+            candidate_sats = SIMULATED_SATELLITES.get(s_band, []) if iq_sec else []
+            for const, svid, sim_fd, sim_delay, sim_cn0 in candidate_sats:
                 acq = self.acq_secondary.acquire_satellite(
                     iq_samples=iq_sec,
                     band_id=s_band,
@@ -160,6 +166,7 @@ class TrisatSdrReceiver:
         with self._lock:
             self.latest_acquisitions = results
             self.tracking_channels = channels
+            self._primary_channel_count = primary_channel_count
         return results
 
     def step_epoch(self) -> Dict[str, Any]:
@@ -185,6 +192,9 @@ class TrisatSdrReceiver:
             iq_sec = []
             s_spec_db = [-65.0] * 64
 
+        if not iq_primary and not iq_sec:
+            raise EOFError("No IQ samples remain in the active captures.")
+
         tracked: List[TrackingTelemetry] = []
         new_frames: List[DecodedGnssFrame] = []
 
@@ -195,7 +205,9 @@ class TrisatSdrReceiver:
             self.secondary_spectrum_db = s_spec_db
 
             for idx, ch in enumerate(self.tracking_channels):
-                iq_blk = iq_primary if ch.band_id in ("GAL_E1", "GPS_L1") else iq_sec
+                iq_blk = iq_primary if idx < self._primary_channel_count else iq_sec
+                if not iq_blk:
+                    continue
                 t_state = ch.step(iq_blk, dt_sec=0.1)
                 tracked.append(t_state)
 
@@ -259,7 +271,11 @@ class TrisatSdrReceiver:
             self.config.dual_sdr_enabled = dual_enabled
             self.config.secondary_sdr.band_id = new_band_id
             self.config.secondary_sdr.sample_rate_hz = GNSS_BANDS[new_band_id].recommended_sample_rate_hz
-            self.secondary_stream = SdrStreamSource(self.config.secondary_sdr)
+            if self.config.secondary_sdr.driver == "file":
+                # A band change reinterprets the recording, it does not rewind it.
+                self.secondary_stream.band_spec = GNSS_BANDS[new_band_id]
+            else:
+                self.secondary_stream = SdrStreamSource(self.config.secondary_sdr)
             self.acq_secondary = PcpsAcquisitionEngine(
                 sample_rate_hz=self.config.secondary_sdr.sample_rate_hz,
                 doppler_max_hz=self.config.doppler_search_max_hz,
@@ -272,14 +288,17 @@ class TrisatSdrReceiver:
     def start_background(self, interval_sec: float = 0.5) -> None:
         if self._running:
             return
-        self.streamer.start()
         self.initialize_acquisition()
+        self.streamer.start()
         self._running = True
 
         def _loop():
             while self._running:
                 try:
                     self.step_epoch()
+                except EOFError:
+                    self.stop_background()
+                    break
                 except Exception:
                     pass
                 time.sleep(interval_sec)

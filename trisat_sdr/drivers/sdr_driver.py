@@ -13,16 +13,25 @@ Supports:
 
 import cmath
 import math
-import os
 import random
 import shutil
 import struct
 import subprocess
 from dataclasses import dataclass
+from threading import Lock
 from typing import Dict, List, Optional, Tuple
 
 from ..config import GNSS_BANDS, SdrChannelConfig
 from ..dsp.codes import HAS_NUMPY, np, sample_code_waveform
+
+
+# Interleaved I/Q pair layout, bias and scale.
+IQ_FILE_FORMATS = {
+    "int8": (struct.Struct("bb"), 0.0, 128.0),
+    "uint8": (struct.Struct("BB"), 127.5, 127.5),
+    "int16": (struct.Struct("<hh"), 0.0, 32768.0),
+    "float32": (struct.Struct("<ff"), 0.0, 1.0),
+}
 
 
 @dataclass
@@ -191,7 +200,9 @@ class SdrStreamSource:
         self.config = config
         self.band_spec = GNSS_BANDS.get(config.band_id, GNSS_BANDS["GAL_E1"])
         self._replica_cache: Dict[Tuple[str, int, int], List[float]] = {}
-        self._block_count = 0
+        self._iq_file_offset = 0
+        self._iq_file_eof = False
+        self._iq_file_lock = Lock()
 
     def get_hackrf_cli_command(self) -> List[str]:
         """
@@ -216,51 +227,40 @@ class SdrStreamSource:
         return cmd
 
     def read_iq_samples(self, num_samples: int = 1024) -> List[complex]:
-        """Reads or synthesizes a block of complex baseband IQ samples."""
-        self._block_count += 1
-
-        # 1. If reading from an IQ binary file
-        if self.config.driver == "file" and self.config.iq_file_path and os.path.isfile(self.config.iq_file_path):
+        """Read a block. File sources return a short final block and then an empty list."""
+        if num_samples < 0:
+            raise ValueError("The IQ sample count must be nonnegative.")
+        if num_samples == 0:
+            return []
+        if self.config.driver == "file":
             return self._read_from_iq_file(num_samples)
-
-        # 2. Synthesize realistic composite GNSS baseband signal for the selected band
         return self._synthesize_composite_iq(num_samples)
 
     def _read_from_iq_file(self, num_samples: int) -> List[complex]:
+        path = self.config.iq_file_path
+        if not path:
+            raise ValueError("An IQ capture path is required for the file driver.")
         fmt = self.config.iq_format.lower()
-        bytes_per_iq = {"int8": 2, "uint8": 2, "int16": 4, "float32": 8}.get(fmt, 2)
-        byte_offset = (self._block_count * num_samples * bytes_per_iq)
-        try:
-            file_size = os.path.getsize(self.config.iq_file_path)  # type: ignore
-            if file_size > 0:
-                byte_offset %= max(1, file_size - num_samples * bytes_per_iq)
-            with open(self.config.iq_file_path, "rb") as f:  # type: ignore
-                f.seek(byte_offset)
-                raw = f.read(num_samples * bytes_per_iq)
-            samples: List[complex] = []
-            if fmt == "int8":
-                for i in range(0, len(raw) - 1, 2):
-                    iv = struct.unpack("b", raw[i:i+1])[0] / 128.0
-                    qv = struct.unpack("b", raw[i+1:i+2])[0] / 128.0
-                    samples.append(complex(iv, qv))
-            elif fmt == "uint8":
-                for i in range(0, len(raw) - 1, 2):
-                    iv = (raw[i] - 127.5) / 127.5
-                    qv = (raw[i+1] - 127.5) / 127.5
-                    samples.append(complex(iv, qv))
-            elif fmt == "int16":
-                for i in range(0, len(raw) - 3, 4):
-                    iv, qv = struct.unpack("<hh", raw[i:i+4])
-                    samples.append(complex(iv / 32768.0, qv / 32768.0))
-            else:
-                for i in range(0, len(raw) - 7, 8):
-                    iv, qv = struct.unpack("<ff", raw[i:i+8])
-                    samples.append(complex(iv, qv))
-            if len(samples) < num_samples:
-                samples.extend([0j] * (num_samples - len(samples)))
+        if fmt not in IQ_FILE_FORMATS:
+            raise ValueError(f"Unsupported IQ capture format: {fmt}")
+        pair, bias, scale = IQ_FILE_FORMATS[fmt]
+        requested_bytes = num_samples * pair.size
+
+        with self._iq_file_lock:
+            if self._iq_file_eof:
+                return []
+            with open(path, "rb") as stream:
+                stream.seek(self._iq_file_offset)
+                raw = stream.read(requested_bytes)
+            # Only complete I/Q pairs form samples. A partial tail is discarded at EOF.
+            complete_bytes = len(raw) - len(raw) % pair.size
+            samples = [
+                complex((i - bias) / scale, (q - bias) / scale)
+                for i, q in pair.iter_unpack(memoryview(raw)[:complete_bytes])
+            ]
+            self._iq_file_offset += len(raw)
+            self._iq_file_eof = len(raw) < requested_bytes
             return samples
-        except Exception:
-            return self._synthesize_composite_iq(num_samples)
 
     def _get_cached_code(self, band_id: str, svid: int, num_samples: int) -> List[float]:
         key = (band_id, svid, num_samples)

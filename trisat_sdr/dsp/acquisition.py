@@ -139,6 +139,8 @@ class PcpsAcquisitionEngine:
         fft_len = max(fft_len, 256)
 
         x_slice = list(iq_samples[:fft_len])
+        # The final capture block can be shorter than the minimum FFT window.
+        x_slice.extend([0j] * (fft_len - len(x_slice)))
         code_fft_conj = self._get_replica_fft(band_id, svid, fft_len)
 
         doppler_bins: List[float] = []
