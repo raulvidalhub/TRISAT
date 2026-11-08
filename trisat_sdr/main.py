@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         help="Disable Dual-HackRF mode and run with a single SDR front-end",
     )
     parser.add_argument(
+        "--doppler-max-hz",
+        type=float,
+        default=ReceiverConfig.doppler_search_max_hz,
+        help="Maximum absolute acquisition Doppler in Hz (default: %(default)g)",
+    )
+    parser.add_argument(
         "--udp-host",
         default="127.0.0.1",
         help="Target host for UDP telemetry stream (default: 127.0.0.1)",
@@ -83,7 +89,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also emit simulated legacy NMEA and navigation frames for a dedicated test client",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    bands = [args.band1] if args.single_sdr else [args.band1, args.band2]
+    nyquist_hz = min(GNSS_BANDS[band].recommended_sample_rate_hz for band in bands) / 2
+    if not 0 <= args.doppler_max_hz < nyquist_hz:
+        parser.error(f"--doppler-max-hz must be nonnegative and below {nyquist_hz:g} Hz for the selected bands")
+    return args
 
 
 def print_banner(snap: dict, web_url: str = "") -> None:
@@ -120,6 +131,7 @@ def main() -> int:
     cfg.primary_sdr.sample_rate_hz = GNSS_BANDS[args.band1].recommended_sample_rate_hz
     cfg.secondary_sdr.band_id = args.band2
     cfg.secondary_sdr.sample_rate_hz = GNSS_BANDS[args.band2].recommended_sample_rate_hz
+    cfg.doppler_search_max_hz = args.doppler_max_hz
     cfg.telemetry.udp_host = args.udp_host
     cfg.telemetry.udp_port = args.udp_port
     cfg.telemetry.tcp_port = args.tcp_port

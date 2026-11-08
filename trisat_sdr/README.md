@@ -31,6 +31,9 @@ python3 trisat_sdr/main.py --band2 GAL_E5_ALTBOC
 
 # 3. Headless console mode streaming frames over UDP and TCP
 python3 trisat_sdr/main.py --headless
+
+# 4. Search acquisition Doppler up to 15 kHz on either side of zero
+python3 trisat_sdr/main.py --doppler-max-hz 15000
 ```
 
 ---
@@ -44,6 +47,8 @@ When using `SdrChannelConfig(driver="file", iq_file_path=..., iq_format=...)`, e
 The PCPS search for `GAL_E1` uses the Galileo E1-B data component. For a file source it searches SVIDs 1–36 with the official 4092-chip memory codes. It correlates a 4 ms CBOC replica against 8 ms of complex IQ, so the search can find a complete symbol even if the input starts between symbol boundaries. It reports delay relative to the input window and Doppler on the configured search grid. A detection requires both a peak above the noise floor and a 3 dB margin over distinct code phases. If several codes pass, the search checks each weaker candidate again after subtracting fitted replicas of stronger detections from that same window. This reduces false locks from cross-correlation without consuming more of the recording. NumPy speeds up a full search.
 
 Configure `ReceiverConfig.primary_sdr` with `driver="file"`, `band_id="GAL_E1"`, the capture's `iq_file_path`, `iq_format`, and `sample_rate_hz`. Call `TrisatSdrReceiver(config).initialize_acquisition()` and inspect the results with `acquired=True`. The capture must contain at least 8 ms of interleaved complex samples centered on 1575.42 MHz. Acquisition sensitivity, front-end filtering, clock error, and false alarms on live RF remain to be measured. The reported C/N₀ is a heuristic estimate. Live IQ streaming and downstream tracking and navigation are outside this acquisition validation.
+
+For IQ file acquisition, set `ReceiverConfig(doppler_search_max_hz=15000)` before creating the receiver to search from −15 kHz to +15 kHz. The default half-width is 5 kHz and the default bin spacing is 250 Hz. A wider search tests more bins per window.
 
 `dsp/C7_E1B.txt` is the unmodified E1-B attachment from Annex C of the Galileo OS SIS ICD, Issue 2.2, November 2025, © European Union 2025. See the original document's terms of use, disclaimers and Annex H in `EUSPA/PDFs/Galileo_OS_SIS_ICD_in_force.pdf`. [Galileo OS SIS ICD](https://www.gsc-europa.eu/sites/default/files/sites/all/files/Galileo_OS_SIS_ICD_in_force.pdf)
 
