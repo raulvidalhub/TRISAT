@@ -1,4 +1,4 @@
-"""Optional offline OSNMAlib adapter for the SBF viewer."""
+"""Optional offline OSNMAlib adapter for recorded Galileo I/NAV."""
 
 import json
 import shutil
@@ -16,14 +16,19 @@ class VerificationTimeline:
     def __init__(self, statuses, available_at):
         self._history = {}
         counts = {}
+        self._failures = Counter()
         if len(statuses) != len(available_at):
             raise ValueError("statuses and available_at must have the same length")
         for status, index in zip(statuses, available_at):
             week, tow = status["metadata"]["GST_subframe"]
             affected = set()
             for tag in status["verified_OSNMA_material"]["tags"]:
-                if tag["verification"] is True and 1 <= tag["prn_d"] <= 36:
-                    svid = tag["prn_d"]
+                svid = tag["prn_d"]
+                if not 1 <= svid <= 36:
+                    continue
+                if tag["verification"] is False:
+                    self._failures[svid] += 1
+                elif tag["verification"] is True:
                     counts.setdefault(svid, Counter())[tag["adkd"]] += 1
                     affected.add(svid)
             for svid in affected:
@@ -47,9 +52,33 @@ class VerificationTimeline:
             for svid, history in sorted(self._history.items())
         }
 
+    def failures(self):
+        return dict(sorted(self._failures.items()))
+
 
 def verify_recording(pages, merkle_tree, public_key):
-    """Verify recorded pages locally using an independently installed OSNMAlib."""
+    """Verify recorded Septentrio SBF pages with OSNMAlib."""
+
+    def timed_pages():
+        from bitstring import BitArray
+
+        for page in pages:
+            if page["gps_week"] < GPS_TO_GALILEO_WEEK:
+                raise ValueError("The SBF recording does not contain a full GPS week number.")
+            bits = BitArray(hex=page["payload_hex"])[:234]
+            # Septentrio omits the six even-page tail bits.
+            bits.insert("0b000000", 114)
+            yield (
+                page["svid"], page["gps_week"] - GPS_TO_GALILEO_WEEK,
+                page["tow_ms"] // 1000 - 2, bits, page["band"],
+                page["navigation_crc_passed"],
+            )
+
+    return verify_timed_pages(timed_pages(), merkle_tree, public_key)
+
+
+def verify_timed_pages(pages, merkle_tree, public_key):
+    """Verify timed 240-bit I/NAV pages with caller-provisioned trust anchors."""
     try:
         from bitstring import BitArray
         from osnma.input_formats.base_classes import DataFormat, GAL_BAND
@@ -61,21 +90,8 @@ def verify_recording(pages, merkle_tree, public_key):
         provides_independent_clock = False
 
         def __iter__(self):
-            for self.index, page in enumerate(pages):
-                if page["gps_week"] < GPS_TO_GALILEO_WEEK:
-                    raise ValueError("The SBF recording does not contain a full GPS week number.")
-                bits = BitArray(hex=page["payload_hex"])[:234]
-                # Septentrio omits the six even-page tail bits. The verifier
-                # expects the complete 240-bit layout and the page start time.
-                bits.insert("0b000000", 114)
-                yield DataFormat(
-                    page["svid"],
-                    page["gps_week"] - GPS_TO_GALILEO_WEEK,
-                    page["tow_ms"] // 1000 - 2,
-                    bits,
-                    GAL_BAND(page["band"]),
-                    page["navigation_crc_passed"],
-                )
+            for self.index, (svid, week, tow, payload, band, crc) in enumerate(pages):
+                yield DataFormat(svid, week, tow, BitArray(payload), GAL_BAND(band), crc)
 
     feed = RecordedPages()
     available_at = []

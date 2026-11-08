@@ -98,6 +98,35 @@ Used for direct USB-C connection between the SparkFun ZED-F9P board and a Mac or
   ```
   Restores default 38400 bps u-blox settings if communication is ever lost.
 
+### Offline OSNMA verification for ZED-F9P
+
+The F9P replay uses the same OSNMAlib verifier as the [Septentrio SBF viewer](../trisat_sdr/README.md#optional-offline-osnma-verification). It checks the UBX checksum and Galileo CRC, then passes complete E1-B pages to the verifier for DSM-KROOT, TESLA and navigation-tag verification. Each reported count is for a tag and its target SVID. A failed tag is a cryptographic mismatch. An empty count can also mean that the capture lacked enough OSNMA material to verify tags. The result describes the recorded navigation data.
+
+Set up OSNMAlib using the [SBF replay instructions](../trisat_sdr/README.md), then run from the repository root:
+
+```bash
+python -m trisat_hw.zed_f9p.osnma_replay capture.jsonl --merkle-tree merkle.xml --public-key public.xml
+```
+
+The capture contains one JSON object per line. Each object has an integer `galileo_week`, an integer `tow_s` for the first transmitted symbol of the even E1-B page, and `ubx_hex` for the full `RXM-SFRBX` packet, including its sync bytes and checksum. For UDP captures, remove the four-byte `RAW:` prefix before hex encoding. Order the rows by GST. Satellites can share a timestamp. Identical copies at one epoch count once. Conflicting copies cause the replay to stop.
+
+`RXM-SFRBX` and `$GALINAV` carry no page timestamp. Supply the page GST from a timing source that can correlate the capture with the transmission epoch. The replay assumes those times and the supplied Merkle tree and public key XML files are trusted. Use authenticated material appropriate to the capture date. This offline tool does not establish independent clock synchronisation or live replay protection.
+
+#### Reproduce the hardware-free validation
+
+Download [Annex B from the European GNSS Service Centre](https://www.gsc-europa.eu/sites/default/files/sites/all/files/Test_vectors.zip) and set `TRISAT_OSNMA_ANNEX_B` to the ZIP path. Run `python -m unittest discover -s trisat_hw/zed_f9p/tests -v`. The optional tests use configurations 1 and 2 with their matching test keys. They use the official transmission time and wrap each original page in a constructed UBX packet.
+
+| Input | Verified tags | Failed tags |
+| --- | ---: | ---: |
+| Configuration 1 | 12,418 | 0 |
+| Configuration 2 | 11,325 | 0 |
+| Configuration 1 with all 40 OSNMA bits erased | 0 | 0 |
+| Configuration 1 with altered WT1–4 navigation bits | 1,054 | 11,364 |
+
+Both altered controls recalculate the Galileo CRC and UBX checksum. The remaining verified tags in the last row cover data unaffected by the changed bits.
+
+With the physical receiver, capture `RXM-SFRBX` in open sky and establish a way to correlate every E1-B page with GST using a separate time reference. Record the firmware and timing setup. Check for missing pages, duplicates and subframe alignment before replaying with the operational keys. Confirm that tags verify after the corresponding TESLA keys arrive.
+
 ---
 
 ## 3. Geneq SXblue Sub-Meter Receiver (`trisat_hw/sxblue`)
