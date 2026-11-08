@@ -88,6 +88,17 @@ class TestGalileoE1bAcquisition(unittest.TestCase):
                 result = engine.acquire_satellite(samples, "GAL_E1", "GALILEO", svid, 4092)
                 self.assertFalse(result.acquired)
 
+    def test_doppler_grid_keeps_zero_and_both_off_grid_limits(self):
+        rate = 4_000_000
+        for limit, doppler in ((100, 0), (600, 0), (100, -100), (100, 100)):
+            with self.subTest(limit=limit, doppler=doppler):
+                iq = make_iq(1, rate, 2919, doppler, noise_std=0)
+                result = acquisition.PcpsAcquisitionEngine(rate, limit).acquire_satellite(
+                    iq, "GAL_E1", "GALILEO", 1, 4092
+                )
+                self.assertTrue(result.acquired)
+                self.assertEqual(result.doppler_hz, doppler)
+
     def test_residual_peak_must_confirm_the_original_delay_and_doppler(self):
         engine = acquisition.PcpsAcquisitionEngine(4_000_000, 15_000)
 

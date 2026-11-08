@@ -98,6 +98,10 @@ class PcpsAcquisitionEngine:
         doppler_step_hz: float = 250.0,
         threshold_snr_db: float = 11.5,
     ):
+        if not math.isfinite(doppler_max_hz) or doppler_max_hz < 0:
+            raise ValueError("The Doppler limit must be finite and nonnegative.")
+        if not math.isfinite(doppler_step_hz) or doppler_step_hz <= 0:
+            raise ValueError("The Doppler step must be finite and positive.")
         self.sample_rate_hz = sample_rate_hz
         self.doppler_max_hz = doppler_max_hz
         self.doppler_step_hz = doppler_step_hz
@@ -226,11 +230,11 @@ class PcpsAcquisitionEngine:
         x_slice.extend([0j] * (window_len - len(x_slice)))
         code_fft_conj = self._get_replica_fft(band_id, svid, replica_len, fft_len)
 
-        doppler_bins: List[float] = []
-        f = -self.doppler_max_hz
-        while f <= self.doppler_max_hz + 1e-6:
-            doppler_bins.append(f)
-            f += self.doppler_step_hz
+        # Anchor the grid at zero and retain both limits when they fall between bins.
+        steps = math.floor(self.doppler_max_hz / self.doppler_step_hz)
+        doppler_bins = [i * self.doppler_step_hz for i in range(-steps, steps + 1)]
+        if doppler_bins[-1] < self.doppler_max_hz:
+            doppler_bins = [-self.doppler_max_hz, *doppler_bins, self.doppler_max_hz]
 
         best_peak = 0.0
         best_doppler = 0.0
