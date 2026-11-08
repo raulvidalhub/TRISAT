@@ -58,4 +58,4 @@ jobs:
         run: |
           arduino-cli core update-index --additional-urls "$ESP32_INDEX"
           arduino-cli core install esp32:esp32@3.3.12 --additional-urls "$ESP32_INDEX"
-          arduino-cli compile --fqbn esp32:esp32:esp32 trisat_hw/esp32/esp32_hybrid_bridge
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs trisat_hw/esp32/esp32_hybrid_bridge

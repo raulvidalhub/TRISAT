@@ -59,7 +59,7 @@ The **ESP32 Hybrid Bridge** is the recommended wireless adapter for portable fie
 ### Flashing Instructions (Arduino IDE):
 1. Install the **ESP32 Board Package** in Arduino IDE (`esp32 by Espressif Systems`).
 2. Open [`esp32_hybrid_bridge/esp32_hybrid_bridge.ino`](esp32_hybrid_bridge/esp32_hybrid_bridge.ino).
-3. Select Board: **ESP32 Dev Module**.
+3. Select **ESP32 Dev Module** and the **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)** partition scheme. The Wi-Fi and BLE firmware exceeds the default app partition on Arduino ESP32 core 3.3.12.
 4. Select Port: `/dev/cu.usbserial-*` (or `/dev/cu.wchusbserial*`).
 5. Upload the sketch.
 
