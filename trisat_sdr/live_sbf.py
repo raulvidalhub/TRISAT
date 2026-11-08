@@ -52,7 +52,8 @@ def capture_session(serial_port, recording, receiver, seconds=None):
     while True:
         finished = deadline is not None and monotonic() >= deadline
         chunk = b"" if finished else serial_port.read(min(serial_port.in_waiting, 32_768) or 1)
-        for kind, block in framer.feed(chunk, final=not chunk):
+        # A serial read can time out in the middle of a block.
+        for kind, block in framer.feed(chunk, final=finished):
             recording.write(block)
             receiver.accept(kind, block)
         if finished:

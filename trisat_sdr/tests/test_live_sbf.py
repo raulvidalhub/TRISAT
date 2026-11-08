@@ -21,8 +21,8 @@ class TestLiveSbf(unittest.TestCase):
         damaged[-1] ^= 1
         serial = Mock(in_waiting=4096)
         serial.read.side_effect = [
-            b"USB2>\r\n" + navigation[:1], navigation[1:] + position[:7],
-            position[7:] + damaged + measurement, KeyboardInterrupt,
+            b"USB2>\r\n" + navigation[:1], navigation[1:] + position[:12],
+            b"", position[12:] + damaged + measurement, KeyboardInterrupt,
         ]
         recording = io.BytesIO()
         receiver = LiveReceiver()
@@ -34,7 +34,7 @@ class TestLiveSbf(unittest.TestCase):
         self.assertEqual(state["receiver_position"]["solution"], "standalone")
         self.assertEqual(state["galileo_signal_quality"]["signals"][0]["cn0_dbhz"], {"main": 40.0})
 
-    def test_recovers_complete_block_after_corrupt_length_at_timeout(self):
+    def test_recovers_complete_block_after_corrupt_length_at_end(self):
         framer = SbfFramer()
         block = inav()
         false_header = block[:6] + b"\xfc\xff"
