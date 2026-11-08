@@ -16,7 +16,7 @@ struct INavMessageCard: View {
                     .foregroundColor(.secondary)
             }
             
-            Text("Submessage ID: \(message.submessageId)")
+            Text("Submessage ID: \(message.submessageId) · \(message.band)")
                 .font(.caption)
                 .foregroundColor(.secondary)
             

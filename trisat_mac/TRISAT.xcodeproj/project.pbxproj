@@ -29,6 +29,7 @@
 		100000000000000000000020 /* BleDevicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* BleDevicePickerSheet.swift */; };
 		100000000000000000000021 /* MacSerialPortManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* MacSerialPortManager.swift */; };
 		100000000000000000000022 /* GnssTelemetryBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* GnssTelemetryBridge.swift */; };
+		100000000000000000000023 /* F9pTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* F9pTelemetry.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,6 +56,7 @@
 		200000000000000000000020 /* BleDevicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BleDevicePickerSheet.swift; sourceTree = "<group>"; };
 		200000000000000000000021 /* MacSerialPortManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSerialPortManager.swift; sourceTree = "<group>"; };
 		200000000000000000000022 /* GnssTelemetryBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GnssTelemetryBridge.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* F9pTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../trisat_ios/TRISAT/F9pTelemetry.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,6 +101,7 @@
 				200000000000000000000020 /* BleDevicePickerSheet.swift */,
 				200000000000000000000021 /* MacSerialPortManager.swift */,
 				200000000000000000000022 /* GnssTelemetryBridge.swift */,
+				200000000000000000000023 /* F9pTelemetry.swift */,
 			);
 			path = TRISAT;
 			sourceTree = "<group>";
@@ -197,6 +200,7 @@
 				100000000000000000000020 /* BleDevicePickerSheet.swift in Sources */,
 				100000000000000000000021 /* MacSerialPortManager.swift in Sources */,
 				100000000000000000000022 /* GnssTelemetryBridge.swift in Sources */,
+				100000000000000000000023 /* F9pTelemetry.swift in Sources */,
 			);
 		};
 /* End PBXSourcesBuildPhase section */
