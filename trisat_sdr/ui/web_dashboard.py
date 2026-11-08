@@ -7,7 +7,10 @@ GNU/Linux, and Windows without requiring external web server libraries.
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit
+
+from ..config import GNSS_BANDS
+
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -183,7 +186,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <p>Portable SDR Baseband Engine (macOS · GNU/Linux · Windows) | Dual-HackRF Synchronized (E1 OSNMA + E5 AltBOC + E6 HAS)</p>
   </div>
   <div style="display:flex; gap:10px; align-items:center;">
-    <span id="fixBadge" class="badge badge-green">INITIALIZING...</span>
+    <span class="badge badge-amber">SIMULATED DATA</span>
+    <span id="fixBadge" class="badge badge-cyan">INITIALIZING...</span>
     <span id="epochBadge" class="badge badge-cyan">EPOCH 0</span>
   </div>
 </header>
@@ -254,11 +258,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>🔗 TRISAT Telemetry Bridge (NMEA / $GALINAV / JSON)</span>
-      <span class="badge badge-cyan" id="bridgePkts">0 pkts</span>
+      <span class="badge badge-cyan" id="bridgeGenerated">0 generated</span>
     </h2>
     <div class="kv-row"><span>UDP Stream (iOS/Android/Mac):</span><span id="bridgeUdp" style="color:#34d399;">--</span></div>
+    <div class="kv-row"><span>UDP local writes</span><span id="bridgeUdpWrites">--</span></div>
     <div class="kv-row"><span>TCP Server (Multi-client):</span><span id="bridgeTcp" style="color:#38bdf8;">--</span></div>
-    <div class="kv-row"><span>macOS Virtual Serial (PTY):</span><span id="bridgePty" style="color:#fbbf24;">--</span></div>
+    <div class="kv-row"><span>TCP local writes</span><span id="bridgeTcpWrites">--</span></div>
+    <div class="kv-row"><span>Serial output (PTY)</span><span id="bridgePty" style="color:#fbbf24;">--</span></div>
+    <div style="color:var(--muted); margin-top:8px;">Recent generated NMEA</div>
     <div class="mono-box" id="nmeaBox" style="height:105px; margin-top:8px; color:#34d399;"></div>
   </div>
 </div>
@@ -296,12 +303,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>🛡️ Galileo OSNMA Cryptographic Engine</span>
-      <span class="badge badge-green" id="osnmaBadge">ECDSA + TESLA VERIFIED</span>
+      <span class="badge badge-amber" id="osnmaBadge">SIMULATED</span>
     </h2>
     <div class="kv-row"><span>NMA Status / Chain / CPKS:</span><span id="osnmaNmas" style="color:#34d399;">--</span></div>
     <div class="kv-row"><span>PKID / MACLT / Key & Tag:</span><span id="osnmaParams">--</span></div>
-    <div class="kv-row"><span>DSM-KROOT ECDSA P-256:</span><span id="osnmaEcdsa" style="color:#22d3ee;">--</span></div>
-    <div class="kv-row"><span>TESLA Chain (K_I -> KROOT):</span><span id="osnmaTesla" style="color:#fbbf24;">--</span></div>
+    <div class="kv-row"><span>Session authentication:</span><span id="osnmaEcdsa" style="color:#22d3ee;">--</span></div>
+    <div class="kv-row"><span>Verified received keys / tags:</span><span id="osnmaTesla" style="color:#fbbf24;">--</span></div>
     <div class="kv-row"><span>Annex A Vector Test:</span><span id="osnmaAnnexA" style="color:#34d399;">--</span></div>
     <div class="cmd-line" id="osnmaKeyLine">KROOT: --</div>
   </div>
@@ -309,7 +316,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card">
     <h2>
       <span>📐 Galileo HAS-UA (PP SEPVT + PPPSD EKF)</span>
-      <span class="badge badge-purple" id="hasUaBadge">SL1 PPP ACTIVE</span>
+      <span class="badge badge-purple" id="hasUaBadge">HAS SCENARIO</span>
     </h2>
     <div class="kv-row"><span>Pivot Satellites (Eq. 80):</span><span id="hasPivots" style="color:#c084fc;">--</span></div>
     <div class="kv-row"><span>Reed-Solomon RS(255,32) GF(2^8):</span><span id="hasRs">--</span></div>
@@ -484,21 +491,27 @@ async function pollStatus() {
 
     if (data.pvt) {
       const pvt = data.pvt;
-      document.getElementById('fixBadge').textContent = pvt.valid_fix ? '3D FIX LOCKED' : 'ACQUIRING';
+      document.getElementById('fixBadge').textContent = pvt.valid_fix ? 'SIMULATED FIX' : 'SIMULATED ACQUISITION';
       document.getElementById('pvtMode').textContent = pvt.solution_mode;
       document.getElementById('pvtLatLon').textContent = pvt.latitude_deg.toFixed(6) + '°, ' + pvt.longitude_deg.toFixed(6) + '°';
       document.getElementById('pvtAltClk').textContent = pvt.altitude_m.toFixed(1) + ' m | ' + pvt.clock_bias_ns.toFixed(1) + ' ns';
       document.getElementById('pvtAcc').textContent = '±' + pvt.horizontal_accuracy_m.toFixed(2) + ' m (2D) / ±' + pvt.vertical_accuracy_m.toFixed(2) + ' m (1D)';
       document.getElementById('pvtDop').textContent = pvt.gdop + ' / ' + pvt.pdop + ' / ' + pvt.hdop;
-      document.getElementById('pvtOsnma').textContent = pvt.osnma_authenticated_sats + ' Sats Verified (HKROOT+MACK)';
+      document.getElementById('pvtOsnma').textContent = 'Simulated OSNMA';
       document.getElementById('pvtHas').textContent = pvt.has_corrected_sats + ' Sats Corrected (E6 C/NAV)';
     }
 
     const br = data.bridge;
-    document.getElementById('bridgePkts').textContent = br.packets_sent + ' pkts (' + (br.bytes_sent/1024).toFixed(1) + ' KB)';
+    document.getElementById('bridgeGenerated').textContent = br.messages_generated + ' generated';
     document.getElementById('bridgeUdp').textContent = 'udp://' + br.udp_target;
     document.getElementById('bridgeTcp').textContent = 'tcp://' + br.tcp_listen + ' (' + br.tcp_clients + ' clients)';
-    document.getElementById('bridgePty').textContent = br.pty_serial_device;
+    for (const [transport, elementId] of [['udp', 'bridgeUdpWrites'], ['tcp', 'bridgeTcpWrites']]) {
+      const stats = br.transports[transport];
+      document.getElementById(elementId).textContent =
+        stats.packets_sent + ' accepted / ' + stats.attempts + ' attempted (' + stats.bytes_sent + ' B)';
+    }
+    document.getElementById('bridgePty').textContent = br.pty_serial_device === 'N/A'
+      ? 'Unavailable' : br.pty_serial_device + ' (output unavailable)';
     document.getElementById('nmeaBox').innerHTML = (br.recent_nmea || []).map(l => '<div>' + l + '</div>').join('');
 
     const chs = data.tracking_channels || [];
@@ -539,10 +552,10 @@ async function pollStatus() {
       const o = data.osnma;
       document.getElementById('osnmaNmas').textContent = o.nmas_status + ' | CID=' + o.cid + ' | ' + o.cpks_status;
       document.getElementById('osnmaParams').textContent = 'PKID=' + o.pkid + ' | MACLT=' + o.maclt_id + ' | KS=' + o.key_size_bits + 'b TS=' + o.tag_size_bits + 'b';
-      document.getElementById('osnmaEcdsa').textContent = o.dsm_kroot_ecdsa_verified ? '✓ P-256 Signature Verified (Merkle Root OK)' : 'Pending';
+      document.getElementById('osnmaEcdsa').textContent = 'No received OSNMA verification';
       document.getElementById('osnmaTesla').textContent = o.verified_keys_count + ' Keys / ' + o.verified_tags_count + ' Tags (SVs: ' + (o.authenticated_svids || []).join(',') + ')';
       document.getElementById('osnmaAnnexA').textContent = o.annex_a_selftest_passed ? '✓ PASSED (E02 WN=1248 MACSEQ=0xB08)' : 'FAILED';
-      document.getElementById('osnmaKeyLine').textContent = 'KROOT: ' + o.latest_kroot_hex + ' | K_I: ' + o.latest_tesla_key_hex;
+      document.getElementById('osnmaKeyLine').textContent = 'Test vector KROOT: ' + o.latest_kroot_hex + ' | K_I: ' + o.latest_tesla_key_hex;
     }
 
     if (data.has_ua) {
@@ -609,49 +622,51 @@ class TrisatWebDashboardServer:
             def log_message(self, format: str, *args) -> None:
                 pass  # Suppress noisy console access logs
 
+            def respond(self, status, body, content_type, *, cors=False, no_store=False):
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                if cors:
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                if no_store:
+                    self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def respond_json(self, status, payload, *, cors=False, no_store=False):
+                body = json.dumps(payload).encode("utf-8")
+                self.respond(status, body, "application/json", cors=cors, no_store=no_store)
+
             def do_GET(self):
                 if live_sbf:
                     host = self.headers.get("Host", "").partition(":")[0].lower()
                     if host not in ("127.0.0.1", "localhost"):
                         self.send_error(403)
                         return
-                parsed = urlparse(self.path)
-                if parsed.path == "/api/status":
-                    snap = receiver_ref.get_status_snapshot()
-                    body = json.dumps(snap).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    if live_sbf:
-                        self.send_header("Cache-Control", "no-store")
-                    else:
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(body)
-                elif not live_sbf or parsed.path == "/":
-                    body = page.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(body)
+                path = urlsplit(self.path).path
+                if path == "/":
+                    self.respond(200, page.encode("utf-8"), "text/html; charset=utf-8")
+                elif path == "/api/status":
+                    self.respond_json(200, receiver_ref.get_status_snapshot(), cors=not live_sbf, no_store=live_sbf)
                 else:
-                    self.send_error(404)
+                    self.respond_json(404, {"error": "Route not found"})
 
             def do_POST(self):
                 if live_sbf:
                     self.send_error(405)
                     return
-                parsed = urlparse(self.path)
-                if parsed.path == "/api/set_band":
-                    qs = parse_qs(parsed.query)
-                    band = qs.get("band", ["GAL_E6"])[0]
-                    receiver_ref.switch_secondary_band(band, dual_enabled=True)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"ok"}')
-                else:
-                    self.send_response(404)
-                    self.end_headers()
+                parsed = urlsplit(self.path)
+                if parsed.path != "/api/set_band":
+                    self.respond_json(404, {"error": "Route not found"})
+                    return
+
+                bands = parse_qs(parsed.query, keep_blank_values=True).get("band", ["GAL_E6"])
+                if len(bands) != 1 or bands[0] not in GNSS_BANDS:
+                    self.respond_json(400, {"error": "Provide one valid band key"})
+                    return
+
+                receiver_ref.switch_secondary_band(bands[0], dual_enabled=True)
+                self.respond_json(200, {"status": "ok"})
 
         self._httpd = ReusableThreadingHTTPServer((self.host, self.port), Handler)
         mirror_port = 8080 if self.port != 8080 else 8085

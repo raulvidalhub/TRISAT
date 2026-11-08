@@ -147,8 +147,7 @@ struct ThreatAnalysisView: View {
                 telemetryBridge.startTrisatSdrEngine()
             }) {
                 Label("Start Simulator", systemImage: "play.fill")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                    .font(.subheadline.weight(.semibold))
             }
             .buttonStyle(.borderedProminent)
             .tint(.orange)
@@ -505,48 +504,25 @@ struct ThreatAnalysisView: View {
     // MARK: - Threat Card 1: Dynamic OS-NMA Cryptographic Authentication (Galileo v1.1 Annex A)
 
     private var osnmaThreatCard: some View {
-        let engine = OsnmaEngine()
-        let rawStatus = engine.verifyOsnma(inavMessages: viewModel.messages)
+        let received = viewModel.messages.filter { !$0.isSimulated && $0.band == "E1-B" }
+        let hasSimulation = viewModel.messages.contains { $0.isSimulated } || telemetryBridge.isSdrEngineRunning
         let annexAPassed = OsnmaEngine.verifyEuspaAnnexATestVector()
-
-        let (statusText, color, details): (String, Color, String) = {
-            if viewModel.simulatedThreatMode == .osnmaFailure {
-                return (
-                    "MAC AUTH FAILED",
-                    .red,
-                    "ALERT: Forged 40-bit OSNMA MACK tag detected on Galileo E1-B I/NAV! HMAC-SHA-256 ADKD=0/4 tag mismatch against TESLA root key K0. Spoofed navigation data rejected."
-                )
+        let (statusText, color, sessionDetails): (String, Color, String) = {
+            if telemetryBridge.isSdrEngineRunning && viewModel.simulatedThreatMode == .osnmaFailure {
+                return ("SIMULATED AUTH FAILURE", .orange, "The selected scenario injects an OSNMA failure.")
             }
-            switch rawStatus {
-            case .notAvailable:
-                return (
-                    "ANNEX A READY",
-                    .cyan,
-                    "KROOT: \(OsnmaEngine.annexAKrootHex.prefix(16))... | ECDSA P-256 DSM-KROOT: VERIFIED | TESLA Chain (K4→K0): VERIFIED | Annex A Self-Test: \(annexAPassed ? "PASS" : "FAIL")"
-                )
-            case .unauthenticated:
-                return (
-                    "SYNCING KEYS",
-                    .orange,
-                    "Awaiting complete 15-subframe DSM-KROOT & MACK tag sequence on Galileo E1-B."
-                )
-            case .verified:
-                return (
-                    "AUTHENTICATED",
-                    .green,
-                    "KROOT: \(OsnmaEngine.annexAKrootHex.prefix(16))... | ECDSA P-256: VERIFIED | TESLA Chain (K4→K0): VERIFIED | ADKD=0/4/12 Tags: VALID (\(viewModel.messages.count) frames)"
-                )
-            case .failed:
-                return (
-                    "MAC AUTH FAILED",
-                    .red,
-                    "Cryptographic OSNMA tag verification failed on incoming Galileo I/NAV subframes."
-                )
+            if OsnmaEngine().receptionStatus(inavMessages: received) == .unverified {
+                return ("I/NAV RECEIVED - UNVERIFIED", .orange, "Received Galileo E1-B pages have not been cryptographically verified.")
             }
+            if hasSimulation {
+                return ("SIMULATED", .cyan, "The session contains generated navigation messages.")
+            }
+            return ("NO I/NAV DATA", .gray, "Awaiting Galileo E1-B navigation messages.")
         }()
+        let details = "\(sessionDetails) Annex A TESLA/HMAC self-test: \(annexAPassed ? "PASS" : "FAIL")."
 
         return ThreatMetricCard(
-            title: "Galileo OSNMA Cryptographic Auth (v1.1)",
+            title: "Galileo OSNMA",
             status: statusText,
             statusColor: color,
             icon: "lock.shield.fill",

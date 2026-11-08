@@ -143,7 +143,7 @@ MACLT_TABLE: Dict[int, Tuple[List[str], List[str]]] = {
 
 @dataclass
 class OsnmaVerificationSummary:
-    """Comprehensive status of the Galileo OSNMA Cryptographic Engine."""
+    """Session status and separate result of the reference-vector self-test."""
     nmas_status: str              # "OPERATIONAL (2)", "TEST (1)", "DON'T USE (3)"
     cid: int                      # Active TESLA Chain ID (0..3)
     cpks_status: str              # "NOMINAL (1)", "EOC (2)", etc.
@@ -161,11 +161,12 @@ class OsnmaVerificationSummary:
     latest_tesla_key_hex: str = ""
     latest_kroot_hex: str = ""
     annex_a_selftest_passed: bool = False
+    status: str = "simulated"
 
 
 class GalileoOsnmaEngine:
     """
-    Implements the complete Galileo OSNMA cryptographic verification pipeline
+    Runs the Galileo OSNMA reference-vector self-test
     (Merkle Tree, DSM-KROOT ECDSA P-256, TESLA Key Chain, MACSEQ, and ADKD=0/4/12 Tags).
     """
 
@@ -199,9 +200,6 @@ class GalileoOsnmaEngine:
         self.tag_size_bits = 40
         self.maclt_id = 34
 
-        self.verified_keys_count = 0
-        self.verified_tags_count = 0
-        self.authenticated_svids: set = set()
         self.latest_tesla_key_hex = self.ANNEX_A_K4
         self.annex_a_selftest_passed = self.run_euspa_annex_a_self_test()
 
@@ -342,14 +340,8 @@ class GalileoOsnmaEngine:
 
         return True
 
-    def authenticate_subframe_tag(self, svid: int, navdata_bytes: bytes, tow_sf: int = 345660) -> Tuple[str, str]:
-        """
-        Generates and verifies an authentic 40-bit OSNMA tag and 8-bit HKROOT byte
-        for the given SVID using the active TESLA chain key.
-        """
-        self.verified_keys_count += 1
-        self.verified_tags_count += 1
-        self.authenticated_svids.add(svid)
+    def generate_simulated_subframe_tag(self, svid: int, navdata_bytes: bytes, tow_sf: int = 345660) -> Tuple[str, str]:
+        """Generates a demo tag with test-vector key material."""
 
         # Build Tag0 input m_0 = (PRN_A || GST_SF || CTR=1 || NMAS=2 || navdata)
         gst_bytes = self.format_gst_sf(self.wn_k, tow_sf)
@@ -368,13 +360,12 @@ class GalileoOsnmaEngine:
             maclt_id=self.maclt_id,
             key_size_bits=self.key_size_bits,
             tag_size_bits=self.tag_size_bits,
-            merkle_root_verified=True,
-            dsm_kroot_ecdsa_verified=self.annex_a_selftest_passed,
-            tesla_chain_verified=self.annex_a_selftest_passed,
-            macseq_verified=self.annex_a_selftest_passed,
-            verified_keys_count=self.verified_keys_count,
-            verified_tags_count=self.verified_tags_count,
-            authenticated_svids=sorted(self.authenticated_svids),
+            merkle_root_verified=False,
+            dsm_kroot_ecdsa_verified=False,
+            tesla_chain_verified=False,
+            macseq_verified=False,
+            verified_keys_count=0,
+            verified_tags_count=0,
             latest_tesla_key_hex=self.latest_tesla_key_hex,
             latest_kroot_hex=self.kroot_hex,
             annex_a_selftest_passed=self.annex_a_selftest_passed,

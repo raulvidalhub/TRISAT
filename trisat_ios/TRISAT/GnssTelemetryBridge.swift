@@ -130,6 +130,7 @@ class GnssTelemetryBridge: ObservableObject {
         bluetoothManager?.connectedPeripheralName = "TRISAT Simulator (UDP / SDR)"
 
         if let vm = viewModel {
+            vm.isSimulatedTelemetry = true
             // Only update coordinate from SDR if the real device CoreLocation hasn't been acquired
             if !vm.hasAcquiredRealLocation {
                 let baseLat = 40.416775 + Double((nativeEpoch % 7) - 3) * 0.0000008
@@ -140,19 +141,19 @@ class GnssTelemetryBridge: ObservableObject {
             if vm.simulatedThreatMode == .nominal && (vm.selectedMode == 1 || vm.selectedMode == 2) {
                 vm.hasExternalHardwareFix = true
                 vm.numSatellitesInFix = 12
-                vm.accuracyText = String(format: "Acc: ±%.2f m | Alt: 667.0 m [%@]", accMeters, modeDesc)
-                vm.fixTypeDesc = modeDesc
+                vm.accuracyText = String(format: "Simulated: ±%.2f m | Alt: 667.0 m [%@]", accMeters, modeDesc)
+                vm.fixTypeDesc = "SIMULATED | \(modeDesc)"
                 vm.hdopValue = "0.68"
                 vm.pdopValue = "1.24"
                 vm.vdopValue = "1.04"
                 vm.dgpsStationId = isHasBand ? "E6-HAS-MT1 (SL1)" : "OSNMA-\(selectedSdrBand2)"
-                vm.dgpsAge = "1.0s (OSNMA:6 HAS:4)"
+                vm.dgpsAge = "1.0s (simulated)"
                 vm.gstRmsError = String(format: "%.2f m RMS", accMeters)
                 vm.gstLatLonErr = "Lat: 0.08m | Lon: 0.07m | Alt: 0.14m"
             }
         }
 
-        // Emit authentic 30-byte Galileo I/NAV v2.2 & E6 HAS frames with valid CRC-24Q
+        // Emit synthetic 30-byte Galileo I/NAV v2.2 & E6 HAS frames with valid CRC-24Q
         let wordTypesCycle = [1, 2, 3, 4, 5, 6, 16, 17, 18, 22, 44]
         let wt = wordTypesCycle[nativeEpoch % wordTypesCycle.count]
         let svid = [2, 7, 11, 19, 24, 31][nativeEpoch % 6]
@@ -185,7 +186,8 @@ class GnssTelemetryBridge: ObservableObject {
             data: Data(frameBytes),
             status: isOsnmaFailSim ? 1 : 0,
             timestamp: Date(),
-            band: simBand
+            band: simBand,
+            isSimulated: true
         )
         if viewModel?.messages.count ?? 0 >= 80 {
             viewModel?.messages.removeFirst()
@@ -218,7 +220,7 @@ class GnssTelemetryBridge: ObservableObject {
         let gpgsv1 = String(format: "$GPGSV,2,1,04,03,55,120,%d,14,32,210,%d,17,68,070,45,22,24,300,37,1*7C", gpsCno1, gpsCno2)
         let gpgsv2 = String(format: "$GPGSV,2,2,04,03,55,120,%d,14,32,210,%d,17,68,070,41,22,24,300,33,6*78", max(25, gpsCno1 - 4), max(25, gpsCno2 - 3))
 
-        // Append live NMEA & $GALINAV / $GALE6HAS sentences to NMEA terminal and parse pipelines
+        // Append demo NMEA & $GALINAV / $GALE6HAS sentences to NMEA terminal and parse pipelines
         let hexStr = frameBytes.map { String(format: "%02X", $0) }.joined()
         let ggaLine = String(format: "$GNGGA,1030%02d.00,4025.0065,N,00342.2274,W,4,18,0.68,667.0,M,48.0,M,1.0,E6HAS*4A", nativeEpoch % 60)
         let gstLine = String(format: "$GNGST,1030%02d.00,0.18,0.09,0.07,22.5,0.08,0.07,0.14*5C", nativeEpoch % 60)
@@ -230,7 +232,9 @@ class GnssTelemetryBridge: ObservableObject {
                 bluetoothManager?.nmeaSentences.removeFirst()
             }
             bluetoothManager?.nmeaSentences.append(sentence)
-            bluetoothManager?.onNmeaLineReceived?(sentence)
+            if sentence != inavLine {
+                bluetoothManager?.onNmeaLineReceived?(sentence)
+            }
         }
         viewModel?.updateSatellites()
     }
@@ -246,7 +250,7 @@ class GnssTelemetryBridge: ObservableObject {
         if !isSdrEngineRunning && packetsReceivedCount == 0 {
             startTrisatSdrEngine(band2: band)
         } else {
-            statusText = "TRISAT-SDR Active (E1 OSNMA + \(band)) [UDP :9090 | Web :8085]"
+            statusText = "TRISAT-SDR Simulation (E1 + \(band)) [UDP :9090 | Web :8085]"
         }
         #endif
     }
@@ -454,21 +458,25 @@ class GnssTelemetryBridge: ObservableObject {
     }
 
     private func handleTrisatSdrJsonPacket(packetType: String, json: [String: Any]) {
+        let isSimulated = json["source"] as? String == "simulated"
+        if isSimulated && viewModel?.selectedMode != 2 { return }
         if viewModel?.selectedMode == 0 {
             viewModel?.selectedMode = 2
         }
 
         if packetType == "inav_frame" || packetType == "gnss_frame" {
-            let svid = json["svid"] as? Int ?? 1
-            let submsgId = json["submsgId"] as? Int ?? 1
-            let hexStr = json["hex"] as? String ?? ""
-            let payloadData = hexStringToData(hexStr) ?? Data((0..<30).map { _ in UInt8.random(in: 0...255) })
+            guard let svid = json["svid"] as? Int, (1...36).contains(svid),
+                  let submsgId = json["submsgId"] as? Int,
+                  let hexStr = json["hex"] as? String,
+                  let payloadData = GalileoINavMessage.decodeHexPayload(hexStr) else { return }
             let msg = GalileoINavMessage(
                 svid: svid,
                 submessageId: submsgId,
                 data: payloadData,
                 status: 0,
-                timestamp: Date()
+                timestamp: Date(),
+                band: packetType == "inav_frame" ? "E1-B" : (json["band"] as? String ?? "Unknown"),
+                isSimulated: isSimulated
             )
             if viewModel?.messages.count ?? 0 >= 100 {
                 viewModel?.messages.removeFirst()
@@ -479,33 +487,18 @@ class GnssTelemetryBridge: ObservableObject {
                 let alt = json["alt"] as? Double ?? 0.0
                 let acc = json["acc"] as? Double ?? 1.0
                 let mode = json["mode"] as? String ?? "TRISAT-SDR"
+                let source = isSimulated ? "Simulated" : "External / unverified source"
                 // Only override location if device has not acquired local CoreLocation
-                if let vm = viewModel, !vm.hasAcquiredRealLocation {
+                if let vm = viewModel, !vm.hasAcquiredRealLocation,
+                   !isSimulated || !vm.hasExternalHardwareFix {
                     vm.currentCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
                     let latDir = lat >= 0 ? "N" : "S"
                     let lonDir = lon >= 0 ? "E" : "W"
                     vm.locationText = String(format: "%.6f° %@, %.6f° %@", abs(lat), latDir, abs(lon), lonDir)
-                    vm.accuracyText = String(format: "%@ | Acc: ±%.2f m | Alt: %.1f m", mode, acc, alt)
+                    vm.accuracyText = String(format: "%@ | %@ | Acc: ±%.2f m | Alt: %.1f m", source, mode, acc, alt)
                 }
             }
         }
-    }
-
-    private func hexStringToData(_ hex: String) -> Data? {
-        let clean = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard clean.count >= 2 && clean.count % 2 == 0 else { return nil }
-        var data = Data(capacity: clean.count / 2)
-        var index = clean.startIndex
-        while index < clean.endIndex {
-            let nextIndex = clean.index(index, offsetBy: 2)
-            if let b = UInt8(clean[index..<nextIndex], radix: 16) {
-                data.append(b)
-            } else {
-                return nil
-            }
-            index = nextIndex
-        }
-        return data
     }
 
     private func parseNmeaOrBinText(_ text: String) {

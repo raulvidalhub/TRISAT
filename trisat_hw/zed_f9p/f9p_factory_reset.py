@@ -15,28 +15,16 @@ import glob
 import time
 import serial
 
+if __package__:
+    from .f9p_stream import build_ubx_msg
+else:
+    from f9p_stream import build_ubx_msg
+
 def find_port():
     ports = glob.glob("/dev/cu.usbmodem*")
     if ports:
         return ports[0]
     return "/dev/cu.usbmodem2101"
-
-def calculate_checksum(msg):
-    """Calculates 8-bit Fletcher checksum (CK_A, CK_B) for UBX frame."""
-    ck_a = 0
-    ck_b = 0
-    # Calculate over Class, ID, Length, and Payload (bytes 2 to end)
-    for b in msg[2:]:
-        ck_a = (ck_a + b) & 0xFF
-        ck_b = (ck_b + ck_a) & 0xFF
-    return bytes([ck_a, ck_b])
-
-def build_ubx_msg(msg_class, msg_id, payload=b""):
-    """Constructs a complete UBX packet with header, length and checksum."""
-    length = len(payload)
-    header = bytes([0xB5, 0x62, msg_class, msg_id, length & 0xFF, (length >> 8) & 0xFF])
-    body = header + payload
-    return body + calculate_checksum(body)
 
 def main():
     port = find_port()

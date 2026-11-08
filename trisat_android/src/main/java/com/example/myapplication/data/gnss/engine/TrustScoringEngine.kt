@@ -112,25 +112,33 @@ class TrustScoringEngine {
 
         val trustLevel = TrustLevel.fromScore(overallScore)
 
-        if (detectedThreats.isEmpty()) {
-            intelligenceLogs.add(
-                IntelligenceLogEntry(
-                    timestampMillis = now,
-                    severity = "SECURE",
-                    tag = "ENGINE_EVAL",
-                    message = "Multi-constellation signal verification clean. Trust level: HIGH_TRUST (${String.format(Locale.US, "%.1f", overallScore)}%)."
-                )
-            )
-        } else {
-            intelligenceLogs.add(
-                IntelligenceLogEntry(
-                    timestampMillis = now,
-                    severity = if (trustLevel == TrustLevel.LOW_TRUST) "ALERT" else "WARNING",
-                    tag = "ENGINE_EVAL",
-                    message = "Threat analysis complete. ${detectedThreats.size} anomaly trigger(s) detected. Final Score: ${String.format(Locale.US, "%.1f", overallScore)}% (${trustLevel.displayName})."
-                )
-            )
+        val hasAnomalies = detectedThreats.isNotEmpty()
+        val hasMeasurements = gnssStatus.satellites.isNotEmpty() && gnssMeasurements.measurements.isNotEmpty()
+        val severity = when {
+            hasAnomalies && trustLevel == TrustLevel.LOW_TRUST -> "ALERT"
+            hasAnomalies || !hasMeasurements || warnings.isNotEmpty() || trustLevel != TrustLevel.HIGH_TRUST -> "WARNING"
+            else -> "INFO"
         }
+        val anomalySummary = if (hasAnomalies) {
+            "${detectedThreats.size} anomaly trigger(s) detected."
+        } else {
+            "No anomaly triggers detected."
+        }
+        val score = String.format(Locale.US, "%.1f", overallScore)
+        val level = trustLevel.name.replace('_', ' ')
+        val trustSummary = if (hasMeasurements) {
+            "Calculated trust level $level ($score%)."
+        } else {
+            "Insufficient GNSS data for a complete assessment. Provisional trust level $level ($score%)."
+        }
+        intelligenceLogs.add(
+            IntelligenceLogEntry(
+                timestampMillis = now,
+                severity = severity,
+                tag = "ENGINE_EVAL",
+                message = "$anomalySummary $trustSummary"
+            )
+        )
 
         return TrustReport(
             overallScore = overallScore,
@@ -418,34 +426,33 @@ class TrustScoringEngine {
         val logs = mutableListOf<IntelligenceLogEntry>()
         val galileoCount = status.satellites.count { it.constellation == ConstellationType.GALILEO }
 
-        val computedStatus = osnmaOverride ?: if (galileoCount >= 3) {
-            OsnmaStatus.VERIFIED
-        } else if (galileoCount > 0) {
-            OsnmaStatus.UNAUTHENTICATED
+        val computedStatus = if (status.isMock) {
+            if (osnmaOverride == OsnmaStatus.SIMULATED_FAILURE) {
+                OsnmaStatus.SIMULATED_FAILURE
+            } else {
+                OsnmaStatus.SIMULATED
+            }
         } else {
-            OsnmaStatus.NOT_AVAILABLE
+            osnmaOverride ?: OsnmaStatus.NOT_AVAILABLE
         }
 
         val score = when (computedStatus) {
             OsnmaStatus.VERIFIED -> 100f
-            OsnmaStatus.UNAUTHENTICATED -> {
-                warnings.add("Galileo OSNMA cryptographic signatures unverified across tracked E1B channels.")
-                threats.add(ThreatType.UNAUTHENTICATED_SIGNAL)
-                55f
-            }
+            OsnmaStatus.UNAUTHENTICATED -> 75f
             OsnmaStatus.FAILED -> {
                 warnings.add("Galileo OSNMA cryptographic verification FAILED - potential signal tampering!")
                 threats.add(ThreatType.UNAUTHENTICATED_SIGNAL)
                 0f
             }
-            OsnmaStatus.NOT_AVAILABLE -> 75f
+            OsnmaStatus.SIMULATED_FAILURE -> 0f
+            OsnmaStatus.SIMULATED, OsnmaStatus.NOT_AVAILABLE -> 75f
         }
 
         logs.add(
             IntelligenceLogEntry(
                 severity = if (computedStatus == OsnmaStatus.FAILED) "ALERT" else "INFO",
                 tag = "OSNMA_AUTH",
-                message = "Galileo OSNMA Cryptographic Status: ${computedStatus.label} ($galileoCount Galileo sats tracked)."
+                message = "Galileo OSNMA Status: ${computedStatus.label} ($galileoCount Galileo sats tracked)."
             )
         )
 

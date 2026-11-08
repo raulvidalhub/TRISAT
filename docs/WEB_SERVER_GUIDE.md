@@ -100,25 +100,20 @@ python3 trisat_sdr/main.py --epochs 10
 
 ## 4. REST APIs & Integration
 
-The web server exposes simple JSON REST endpoints that can be polled by external tools or scripts:
+External tools can use these JSON endpoints. Unknown paths return HTTP `404` with an `error` field. The dashboard HTML is served at `/`.
 
-### `GET /api/snapshot`
-Returns the full receiver telemetry snapshot (SDR hardware status, PVT solution, tracked satellites, OSNMA cryptographic state, and HAS-UA solution).
+### `GET /api/status`
+Returns the current telemetry snapshot, including SDR configuration, tracked satellites, PVT, OSNMA, and HAS-UA fields.
 ```bash
-curl -s http://127.0.0.1:8085/api/snapshot | jq .
+curl -s http://127.0.0.1:8085/api/status | jq .
 ```
 
 ### `POST /api/set_band?band=<BAND_KEY>`
-Dynamically re-tunes the secondary HackRF SDR without restarting the server:
+Updates the configured band for the secondary SDR and returns HTTP `200` with `{"status": "ok"}`. Use a key from `GNSS_BANDS`, such as one of the four listed above. Omitting `band` selects `GAL_E6`. An empty, unknown, or repeated `band` parameter returns HTTP `400` with an `error` field and leaves the configuration as it was.
+
 ```bash
 # Switch secondary SDR to E5b in real time
 curl -X POST "http://127.0.0.1:8085/api/set_band?band=GAL_E5B"
-```
-
-### `GET /api/health`
-Returns server operational status and uptime.
-```bash
-curl -s http://127.0.0.1:8085/api/health
 ```
 
 ---

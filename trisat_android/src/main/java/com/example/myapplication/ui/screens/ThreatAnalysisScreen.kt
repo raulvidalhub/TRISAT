@@ -557,7 +557,7 @@ fun OsnmaAuthenticationCard(osnmaStatus: OsnmaStatus) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Galileo OSNMA Cryptographic Auth",
+                        text = "Galileo OSNMA",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -567,7 +567,8 @@ fun OsnmaAuthenticationCard(osnmaStatus: OsnmaStatus) {
                     OsnmaStatus.VERIFIED -> StatusLevel.SECURE
                     OsnmaStatus.UNAUTHENTICATED -> StatusLevel.WARNING
                     OsnmaStatus.FAILED -> StatusLevel.ALERT
-                    OsnmaStatus.NOT_AVAILABLE -> StatusLevel.INFO
+                    OsnmaStatus.SIMULATED_FAILURE -> StatusLevel.WARNING
+                    OsnmaStatus.SIMULATED, OsnmaStatus.NOT_AVAILABLE -> StatusLevel.INFO
                 }
 
                 StatusBadge(
@@ -598,7 +599,7 @@ fun OsnmaAuthenticationCard(osnmaStatus: OsnmaStatus) {
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Public Key Anchor: ECDSA P-256 (Galileo OSNMA KROOT) • Status: ${osnmaStatus.label}",
+                        text = "Session status: ${osnmaStatus.label}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp

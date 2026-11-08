@@ -3,6 +3,7 @@ package com.example.myapplication
 import com.example.myapplication.data.gnss.engine.TrustScoringEngine
 import com.example.myapplication.data.gnss.mock.MockGnssGenerator
 import com.example.myapplication.data.gnss.model.ConstellationType
+import com.example.myapplication.data.gnss.model.GnssMeasurementDetail
 import com.example.myapplication.data.gnss.model.GnssMeasurementsData
 import com.example.myapplication.data.gnss.model.GnssStatusData
 import com.example.myapplication.data.gnss.model.LocationData
@@ -38,7 +39,11 @@ class TrustScoringEngineTest {
         assertTrue("Overall score should be >= 80%", report.overallScore >= 80f)
         assertTrue("No threats should be detected in nominal scenario", report.threatsDetected.isEmpty())
         assertTrue("Active warnings should be empty", report.activeThreatWarnings.isEmpty())
-        assertEquals(OsnmaStatus.VERIFIED, report.osnmaStatus)
+        assertEquals(OsnmaStatus.SIMULATED, report.osnmaStatus)
+        assertEquals(
+            OsnmaStatus.NOT_AVAILABLE,
+            engine.evaluateTrust(status.copy(isMock = false), measurements, location.copy(isMock = false)).osnmaStatus
+        )
         assertTrue("Intelligence logs should be generated", report.intelligenceLogs.isNotEmpty())
     }
 
@@ -98,12 +103,12 @@ class TrustScoringEngineTest {
             gnssStatus = status,
             gnssMeasurements = measurements,
             location = location,
-            osnmaOverride = OsnmaStatus.FAILED
+            osnmaOverride = OsnmaStatus.SIMULATED_FAILURE
         )
 
         assertNotNull(report)
-        assertEquals(OsnmaStatus.FAILED, report.osnmaStatus)
-        assertTrue("Should detect unauthenticated signal threat", report.threatsDetected.contains(ThreatType.UNAUTHENTICATED_SIGNAL))
+        assertEquals(OsnmaStatus.SIMULATED_FAILURE, report.osnmaStatus)
+        assertFalse(report.threatsDetected.contains(ThreatType.UNAUTHENTICATED_SIGNAL))
         assertEquals(0f, report.subScores.osnmaAuthScore, 0.01f)
     }
 
@@ -144,5 +149,68 @@ class TrustScoringEngineTest {
 
         assertTrue("Estimated HDOP should be reasonable (< 3.0)", report.estimatedHdop < 3.0f)
         assertTrue("Geometry subscore should be high", report.subScores.geometryDopScore >= 80f)
+    }
+
+    @Test
+    fun testEvaluationLogReportsMediumTrustWithoutClaimingAnomaly() {
+        val status = GnssStatusData(satellites = listOf(SatelliteDetail(
+            svid = 1, constellation = ConstellationType.GPS, cn0DbHz = 22f,
+            elevationDegrees = 45f, azimuthDegrees = 90f, usedInFix = true
+        )))
+        val measurements = GnssMeasurementsData(measurements = listOf(GnssMeasurementDetail(
+            svid = 1, constellation = ConstellationType.GPS, state = 0,
+            receivedSvTimeNanos = 1L, cn0DbHz = 22.0
+        )))
+        val report = engine.evaluateTrust(status, measurements, LocationData())
+        val log = report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+
+        assertTrue(report.threatsDetected.isEmpty())
+        assertEquals(TrustLevel.MEDIUM_TRUST, report.trustLevel)
+        assertEquals("WARNING", log.severity)
+        assertTrue(log.message.contains("No anomaly triggers detected."))
+        assertTrue(log.message.contains("Calculated trust level MEDIUM TRUST"))
+    }
+
+    @Test
+    fun testEvaluationLogMarksMissingDataAsProvisional() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val status = generator.createGnssStatusFlow().first()
+        val measurements = generator.createGnssMeasurementsFlow().first()
+        val location = LocationData()
+
+        val reports = listOf(
+            engine.evaluateTrust(GnssStatusData(), GnssMeasurementsData(), location),
+            engine.evaluateTrust(GnssStatusData(), measurements, location),
+            engine.evaluateTrust(status, GnssMeasurementsData(), location)
+        )
+        for (report in reports) {
+            val log = report.intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+            assertEquals("WARNING", log.severity)
+            assertTrue(log.message.contains("Insufficient GNSS data"))
+            assertTrue(log.message.contains("Provisional trust level ${report.trustLevel.name.replace('_', ' ')}"))
+        }
+    }
+
+    @Test
+    fun testEvaluationLogDistinguishesNominalAndDetectedAnomalies() = runBlocking {
+        generator.setScenario(ThreatScenario.NOMINAL)
+        val nominal = engine.evaluateTrust(
+            generator.createGnssStatusFlow().first(),
+            generator.createGnssMeasurementsFlow().first(),
+            generator.createLocationFlow().first()
+        ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+        assertEquals("INFO", nominal.severity)
+        assertTrue(nominal.message.contains("No anomaly triggers detected."))
+        assertTrue(nominal.message.contains("Calculated trust level HIGH TRUST"))
+
+        generator.setScenario(ThreatScenario.SPOOFING_SIMULATOR)
+        val spoofing = engine.evaluateTrust(
+            generator.createGnssStatusFlow().first(),
+            generator.createGnssMeasurementsFlow().first(),
+            generator.createLocationFlow().first()
+        ).intelligenceLogs.single { it.tag == "ENGINE_EVAL" }
+        assertEquals("ALERT", spoofing.severity)
+        assertTrue(spoofing.message.contains("anomaly trigger(s) detected."))
+        assertTrue(spoofing.message.contains("Calculated trust level LOW TRUST"))
     }
 }

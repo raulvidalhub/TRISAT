@@ -16,7 +16,9 @@ class VerificationTimeline:
     def __init__(self, statuses, available_at):
         self._history = {}
         counts = {}
-        for status, index in zip(statuses, available_at, strict=True):
+        if len(statuses) != len(available_at):
+            raise ValueError("statuses and available_at must have the same length")
+        for status, index in zip(statuses, available_at):
             week, tow = status["metadata"]["GST_subframe"]
             affected = set()
             for tag in status["verified_OSNMA_material"]["tags"]:
@@ -33,7 +35,8 @@ class VerificationTimeline:
 
     def at(self, index, svid):
         history = self._history.get(svid, [])
-        past = bisect_right(history, index, key=lambda entry: entry[0])
+        indices = [entry[0] for entry in history]
+        past = bisect_right(indices, index)
         if past:
             return history[past - 1][1]
         return {"verified_tags": 0, "by_adkd": {}, "processed_subframe": None}

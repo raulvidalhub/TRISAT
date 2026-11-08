@@ -104,9 +104,9 @@ class GnssFrameDecoder:
         seed_bytes = f"TRISAT_INAV_E1B_SV{svid:02d}_WT{word_type}_SEQ{seq // 2}".encode("utf-8")
         digest = hashlib.sha256(seed_bytes).digest()
 
-        # 16 bytes data field (128 bits) + 5 bytes OSNMA (8-bit HKROOT + 32-bit MACK authenticated via TESLA key)
+        # 16 bytes data field (128 bits) + 5 bytes OSNMA (8-bit HKROOT + 32-bit MACK generated with the demo TESLA key)
         inav_data_16 = bytes([header_byte]) + digest[:15]
-        hkroot_hex, mack_hex = self.osnma_engine.authenticate_subframe_tag(svid, inav_data_16)
+        hkroot_hex, mack_hex = self.osnma_engine.generate_simulated_subframe_tag(svid, inav_data_16)
         hkroot_byte = bytes.fromhex(hkroot_hex)
         mack_bytes = bytes.fromhex(mack_hex)
         osnma_5 = hkroot_byte + mack_bytes

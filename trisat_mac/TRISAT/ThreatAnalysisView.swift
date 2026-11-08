@@ -114,22 +114,18 @@ struct ThreatAnalysisView: View {
     // MARK: - Threat Card 1: Dynamic OS-NMA Cryptographic Authentication
 
     private var osnmaThreatCard: some View {
-        let osnmaStatus = OsnmaEngine().verifyOsnma(inavMessages: viewModel.messages)
+        let osnmaStatus = OsnmaEngine().receptionStatus(inavMessages: viewModel.messages)
         let (statusText, color, details): (String, Color, String) = {
             switch osnmaStatus {
             case .notAvailable:
-                return ("NO I/NAV DATA", .gray, "Awaiting Galileo E1-B I/NAV subframe telemetry from receiver.")
-            case .unauthenticated:
-                return ("SYNCING KEYS", .orange, "Collecting HKROOT public key certificate and TESLA key chain across GST epochs.")
-            case .verified:
-                return ("AUTHENTICATED", .green, "HKROOT Certificate & TESLA Key Chain verified for E1-B subframes.")
-            case .failed:
-                return ("AUTH FAILED", .red, "Cryptographic MAC verification failed. Possible spoofing detected!")
+                return ("NO I/NAV DATA", .gray, "Awaiting Galileo I/NAV telemetry.")
+            case .unverified:
+                return ("I/NAV RECEIVED - UNVERIFIED", .orange, "Received pages have not been cryptographically verified.")
             }
         }()
 
         return ThreatMetricCard(
-            title: "Galileo OSNMA Cryptographic Auth",
+            title: "Galileo OSNMA",
             status: statusText,
             statusColor: color,
             icon: "lock.shield.fill",

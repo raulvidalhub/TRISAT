@@ -8,7 +8,7 @@ data class TrustReport(
     val activeThreatWarnings: List<String> = emptyList(),
     val estimatedHdop: Float = 1.2f,
     val estimatedVdop: Float = 1.6f,
-    val osnmaStatus: OsnmaStatus = OsnmaStatus.VERIFIED,
+    val osnmaStatus: OsnmaStatus = OsnmaStatus.NOT_AVAILABLE,
     val intelligenceLogs: List<IntelligenceLogEntry> = emptyList(),
     val timestampMillis: Long = System.currentTimeMillis()
 )

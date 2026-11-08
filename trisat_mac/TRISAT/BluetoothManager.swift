@@ -398,15 +398,14 @@ class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         if trimmed.contains("$GALINAV") || trimmed.contains("$RAWNAV") {
             let parts = trimmed.components(separatedBy: ",")
             if parts.count >= 4 {
-                let svid = Int(parts[1]) ?? 1
-                let submsgId = Int(parts[2]) ?? 1
-                let hexPayload = parts[3]
-
-                let dummyData = Data((0..<30).map { _ in UInt8.random(in: 0...255) })
+                let hexPayload = parts[3].components(separatedBy: "*")[0]
+                guard let svid = Int(parts[1]), (1...36).contains(svid),
+                      let submsgId = Int(parts[2]),
+                      let rawData = GalileoINavMessage.decodeHexPayload(hexPayload) else { return }
                 let msg = GalileoINavMessage(
                     svid: svid,
                     submessageId: submsgId,
-                    data: dummyData,
+                    data: rawData,
                     status: 0,
                     timestamp: Date()
                 )
@@ -562,7 +561,7 @@ class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
            let submsgId = json["submsgId"] as? Int,
            let hexPayload = json["hex"] as? String {
 
-            let rawData = Data((0..<30).map { _ in UInt8.random(in: 0...255) })
+            guard (1...36).contains(svid), let rawData = GalileoINavMessage.decodeHexPayload(hexPayload) else { return }
             let msg = GalileoINavMessage(
                 svid: svid,
                 submessageId: submsgId,
