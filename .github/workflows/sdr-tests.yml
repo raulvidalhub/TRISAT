@@ -21,5 +21,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: Install NumPy for IQ tracking tests
+        run: python -m pip install "numpy>=1.24"
       - name: Run SDR tests
         run: python -m unittest discover -s trisat_sdr/tests -v

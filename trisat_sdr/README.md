@@ -54,6 +54,18 @@ For IQ file acquisition, set `ReceiverConfig(doppler_search_max_hz=15000)` befor
 
 Run the hardware-free tests from the repository root with `python -m unittest trisat_sdr.tests.test_galileo_e1b_acquisition -v`. They check the Annex C attachment and generate IQ independently from the search code with known PRNs, delay, carrier Doppler, symbol polarity changes and seeded noise. The receiver test uses a raw float32 IQ file.
 
+### Offline Galileo E1-B tracking
+
+With NumPy installed, run the following command from the repository root on the [CTTC recording](https://gnss-sdr.org/my-first-fix/).
+
+```powershell
+python -m trisat_sdr.track_iq 'C:\path\to\2013_04_04_GNSS_SIGNAL_at_CTTC_SPAIN.dat' --sample-rate-hz 4000000 --iq-format int16 --doppler-max-hz 15000 --acquire-at 0 --acquire-at 0.024 --acquire-at 0.144 --csv 'cttc-tracking.csv'
+```
+
+`--acquire-at` defaults to the beginning of the recording. Repeat it to acquire more channels at known offsets. The CTTC offsets above are the first acquisition windows for E12 and E19, E20, and E11 respectively. Acquired channels are followed through contiguous IQ with a local CBOC delay search and a polarity-independent carrier frequency estimate. The tracker reports lock in 200 ms intervals using measured prompt power and carrier coherence. A final interval is reported when at least 100 ms of complete symbols remain. The summary gives total and longest continuous lock time, and the CSV records the sample boundaries and lock metrics for each interval.
+
+The offline command reports code and carrier frequency tracking separately from the simulated dashboard. Decoding I/NAV, computing position and authenticating OSNMA from the tracked IQ are separate stages.
+
 ## 📡 Telemetry Bridge to TRISAT (`trisat_ios` / macOS / `trisat_android`)
 
 `TRISAT-SDR` sends simulated frames and telemetry as JSON with `"source": "simulated"`. For a dedicated legacy test client, pass `--emit-legacy-simulation` to also send NMEA and custom navigation sentences. Legacy sentences have no provenance field, and GGA reports no real fix. Supported transports:
