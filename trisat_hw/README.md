@@ -112,6 +112,10 @@ The capture contains one JSON object per line. Each object has an integer `galil
 
 `RXM-SFRBX` and `$GALINAV` carry no page timestamp. Supply the page GST from a timing source that can correlate the capture with the transmission epoch. The replay assumes those times and the supplied Merkle tree and public key XML files are trusted. Use authenticated material appropriate to the capture date. This offline tool does not establish independent clock synchronisation or live replay protection.
 
+When present, the broadcast GST in WT0 (time field `10`), WT5 and WT6 is compared with the capture time. WT6 checks TOW only. A mismatch, an out-of-order epoch or conflicting CRC-valid pages for one satellite and epoch stops the replay with an error and no authentication summary. This is a consistency check against the navigation bits. The input clock still requires an independent reference.
+
+The JSON report adds a `status` and a `capture` section while retaining the per-satellite verified and failed tag counts. `no_valid_pages` means no eligible E1-B page reached the verifier. `no_verifiable_tags` means valid pages were present but no tag could be evaluated successfully or rejected. `tags_verified` indicates positive verification with no reported tag failures. `tag_failures` can coexist with verified tags for other data. The counters separate invalid UBX, rejected I/NAV and duplicate pages. `missing_epochs` counts two-second slots between the first and last accepted page where no eligible page was seen from any satellite. It cannot measure per-satellite visibility or losses before or after the accepted interval.
+
 #### Reproduce the hardware-free validation
 
 Download [Annex B from the European GNSS Service Centre](https://www.gsc-europa.eu/sites/default/files/sites/all/files/Test_vectors.zip) and set `TRISAT_OSNMA_ANNEX_B` to the ZIP path. Run `python -m unittest discover -s trisat_hw/zed_f9p/tests -v`. The optional tests use configurations 1 and 2 with their matching test keys. They use the official transmission time and wrap each original page in a constructed UBX packet.
@@ -124,6 +128,8 @@ Download [Annex B from the European GNSS Service Centre](https://www.gsc-europa.
 | Configuration 1 with altered WT1–4 navigation bits | 1,054 | 11,364 |
 
 Both altered controls recalculate the Galileo CRC and UBX checksum. The remaining verified tags in the last row cover data unaffected by the changed bits.
+
+The same Annex B test also shifts configuration 1 by +1 s, +2 s, −30 s and one full week, removes 60 consecutive page epochs (120 s), and duplicates every page. The timestamp shifts produce an error and no summary. The gap removes 1,560 pages and reduces verified tags from 12,418 to 12,038 with zero tag failures. The duplicated run drops 46,800 redundant pages and yields exactly the same tag counts by satellite as the original.
 
 With the physical receiver, capture `RXM-SFRBX` in open sky and establish a way to correlate every E1-B page with GST using a separate time reference. Record the firmware and timing setup. Check for missing pages, duplicates and subframe alignment before replaying with the operational keys. Confirm that tags verify after the corresponding TESLA keys arrive.
 
