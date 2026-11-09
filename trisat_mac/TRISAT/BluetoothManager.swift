@@ -102,7 +102,7 @@ class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
                 return
             }
             let nowStr = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
-            let gga = "$GPGGA,\(nowStr),3727.8940,N,00210.4040,E,1,09,0.8,120.5,M,48.0,M,,*47"
+            let gga = F9pTelemetry.withChecksum("$GPGGA,\(nowStr),3727.8940,N,00210.4040,E,1,09,0.8,120.5,M,48.0,M,,")
             let gsv = "$GAGSV,3,1,11,02,45,090,42,03,32,180,39,07,68,270,44,11,55,045,41*73"
 
             DispatchQueue.main.async {
@@ -395,30 +395,20 @@ class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
     }
 
     private func parseSingleNmeaLine(_ trimmed: String) {
-        if trimmed.contains("$GALINAV") || trimmed.contains("$RAWNAV") {
-            let parts = trimmed.components(separatedBy: ",")
-            if parts.count >= 4 {
-                let hexPayload = parts[3].components(separatedBy: "*")[0]
-                guard let svid = Int(parts[1]), (1...36).contains(svid),
-                      let submsgId = Int(parts[2]),
-                      let rawData = GalileoINavMessage.decodeHexPayload(hexPayload) else { return }
-                let msg = GalileoINavMessage(
-                    svid: svid,
-                    submessageId: submsgId,
-                    data: rawData,
-                    status: 0,
-                    timestamp: Date()
-                )
-                DispatchQueue.main.async {
-                    self.onInavFrameReceived?(msg)
-                }
+        if let page = F9pTelemetry.decodeSentence(trimmed) {
+            let msg = GalileoINavMessage(
+                svid: page.svid, submessageId: page.wordType, data: page.data,
+                status: 0, timestamp: Date(), band: page.band
+            )
+            DispatchQueue.main.async {
+                self.onInavFrameReceived?(msg)
             }
-        } else if trimmed.contains("$GPGGA") || trimmed.contains("$GNGGA") {
-            let parts = trimmed.components(separatedBy: ",")
-            if parts.count >= 6, let lat = parseNmeaCoordinate(parts[2], dir: parts[3]), let lon = parseNmeaCoordinate(parts[4], dir: parts[5]) {
-                DispatchQueue.main.async {
-                    self.onLocationReceived?(lat, lon)
-                }
+        } else if let parts = F9pTelemetry.ggaFields(trimmed),
+                  F9pTelemetry.measuredFix(parts[6]),
+                  let lat = parseNmeaCoordinate(parts[2], dir: parts[3]),
+                  let lon = parseNmeaCoordinate(parts[4], dir: parts[5]) {
+            DispatchQueue.main.async {
+                self.onLocationReceived?(lat, lon)
             }
         }
     }

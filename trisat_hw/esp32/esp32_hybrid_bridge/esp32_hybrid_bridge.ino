@@ -4,6 +4,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include "galileo_inav.h"
 
 // =========================================================================
 // TRISAT ESP32 Hybrid Telemetry Bridge
@@ -48,157 +49,30 @@ class MyServerCallbacks: public BLEServerCallbacks {
 };
 
 // =========================================================================
-// UBX-RXM-SFRBX Binary Decoder (Galileo I/NAV 250-bit subframe extractor)
+// UBX-RXM-SFRBX Galileo I/NAV bridge
 // =========================================================================
-enum UbxState {
-  UBX_WAIT_SYNC1,
-  UBX_WAIT_SYNC2,
-  UBX_CLASS,
-  UBX_ID,
-  UBX_LEN_LSB,
-  UBX_LEN_MSB,
-  UBX_PAYLOAD,
-  UBX_CK_A,
-  UBX_CK_B
-};
-
-UbxState ubxState = UBX_WAIT_SYNC1;
-uint8_t ubxClass = 0;
-uint8_t ubxId = 0;
-uint16_t ubxLen = 0;
-uint16_t ubxPayloadIdx = 0;
-uint8_t ubxPayload[256];
-uint8_t ubxCkA = 0;
-uint8_t ubxCkB = 0;
-uint8_t calcCkA = 0;
-uint8_t calcCkB = 0;
-
+GalileoUbxDecoder galileoDecoder;
 unsigned long lastInavBleMs = 0;
 
-void handleUbxPacket(uint8_t mClass, uint8_t mId, uint16_t len, const uint8_t* payload) {
-  // UBX-RXM-SFRBX (Class 0x02, ID 0x13): Raw Navigation Subframes
-  if (mClass == 0x02 && mId == 0x13 && len >= 8) {
-    uint8_t gnssId = payload[0];
-    uint8_t svId   = payload[1];
-    uint8_t numWords = payload[4];
+void forwardInav(const GalileoInavPage& page) {
+  char sentence[GalileoInavPage::sentenceCapacity];
+  const size_t length = page.formatSentence(sentence);
+  if (!length) return;
 
-    // Galileo (gnssId == 2) with 8 words (250 bits nominal)
-    if (gnssId == 2 && numWords >= 8) {
-      int dataBytes = min((int)(numWords * 4), 32);
-      const uint8_t* frameBytes = payload + 8;
+  udp.beginPacket(broadcastIp, UDP_PORT);
+  udp.write(reinterpret_cast<const uint8_t*>(sentence), length);
+  udp.endPacket();
+  Serial.print(sentence);
 
-      // Extract Galileo Word Type from Word 0 (bits 2..7)
-      uint32_t w0 = (uint32_t)frameBytes[0] |
-                    ((uint32_t)frameBytes[1] << 8) |
-                    ((uint32_t)frameBytes[2] << 16) |
-                    ((uint32_t)frameBytes[3] << 24);
-      uint8_t wordType = (w0 >> 2) & 0x3F;
-      if (wordType == 0) wordType = 1;
-
-      // Convert payload bytes to hexadecimal string
-      char hexBuf[70];
-      for (int i = 0; i < dataBytes; i++) {
-        sprintf(hexBuf + (i * 2), "%02X", frameBytes[i]);
-      }
-      hexBuf[dataBytes * 2] = '\0';
-
-      // Format standard $GALINAV sentence for TRISAT
-      String inavLine = "$GALINAV," + String(svId) + "," + String(wordType) + "," + String(hexBuf);
-      uint8_t chk = 0;
-      for (size_t i = 1; i < inavLine.length(); i++) {
-        chk ^= (uint8_t)inavLine[i];
-      }
-      char chkStr[10];
-      sprintf(chkStr, "*%02X\n", chk);
-      inavLine += chkStr;
-
-      // Broadcast to WiFi UDP
-      udp.beginPacket(broadcastIp, UDP_PORT);
-      udp.write((const uint8_t*)inavLine.c_str(), inavLine.length());
-      udp.endPacket();
-
-      // Log to Serial Monitor
-      Serial.printf("[GALILEO I/NAV] E%02d (WT %02d): %s\n", svId, wordType, hexBuf);
-
-      // Pacing: Stream at most 1 I/NAV frame every 1200ms to BLE to prevent buffer congestion
-      if (deviceConnected && (millis() - lastInavBleMs >= 1200)) {
-        lastInavBleMs = millis();
-        int inavLen = inavLine.length();
-        int offset = 0;
-        while (offset < inavLen) {
-          int chunk = min(20, inavLen - offset);
-          pTxCharacteristic->setValue((uint8_t*)(inavLine.c_str() + offset), chunk);
-          pTxCharacteristic->notify();
-          offset += chunk;
-          delay(4);
-        }
-      }
+  // Preserve the existing BLE pacing and chunk size.
+  if (deviceConnected && (millis() - lastInavBleMs >= 1200)) {
+    lastInavBleMs = millis();
+    for (size_t offset = 0; offset < length; offset += 20) {
+      const size_t chunk = min(static_cast<size_t>(20), length - offset);
+      pTxCharacteristic->setValue(reinterpret_cast<uint8_t*>(sentence + offset), chunk);
+      pTxCharacteristic->notify();
+      delay(4);
     }
-  }
-}
-
-void processUbxByte(uint8_t b) {
-  switch (ubxState) {
-    case UBX_WAIT_SYNC1:
-      if (b == 0xB5) ubxState = UBX_WAIT_SYNC2;
-      break;
-    case UBX_WAIT_SYNC2:
-      if (b == 0x62) {
-        ubxState = UBX_CLASS;
-        calcCkA = 0;
-        calcCkB = 0;
-      } else {
-        ubxState = (b == 0xB5) ? UBX_WAIT_SYNC2 : UBX_WAIT_SYNC1;
-      }
-      break;
-    case UBX_CLASS:
-      ubxClass = b;
-      calcCkA += b; calcCkB += calcCkA;
-      ubxState = UBX_ID;
-      break;
-    case UBX_ID:
-      ubxId = b;
-      calcCkA += b; calcCkB += calcCkA;
-      ubxState = UBX_LEN_LSB;
-      break;
-    case UBX_LEN_LSB:
-      ubxLen = b;
-      calcCkA += b; calcCkB += calcCkA;
-      ubxState = UBX_LEN_MSB;
-      break;
-    case UBX_LEN_MSB:
-      ubxLen |= ((uint16_t)b << 8);
-      calcCkA += b; calcCkB += calcCkA;
-      ubxPayloadIdx = 0;
-      if (ubxLen > 256) {
-        ubxState = UBX_WAIT_SYNC1;
-      } else if (ubxLen == 0) {
-        ubxState = UBX_CK_A;
-      } else {
-        ubxState = UBX_PAYLOAD;
-      }
-      break;
-    case UBX_PAYLOAD:
-      if (ubxPayloadIdx < sizeof(ubxPayload)) {
-        ubxPayload[ubxPayloadIdx] = b;
-      }
-      ubxPayloadIdx++;
-      calcCkA += b; calcCkB += calcCkA;
-      if (ubxPayloadIdx >= ubxLen) {
-        ubxState = UBX_CK_A;
-      }
-      break;
-    case UBX_CK_A:
-      ubxCkA = b;
-      ubxState = UBX_CK_B;
-      break;
-    case UBX_CK_B:
-      ubxCkB = b;
-      if (calcCkA == ubxCkA && calcCkB == ubxCkB) {
-        handleUbxPacket(ubxClass, ubxId, ubxLen, ubxPayload);
-      }
-      ubxState = UBX_WAIT_SYNC1;
-      break;
   }
 }
 
@@ -260,11 +134,12 @@ void loop() {
   while (Serial2.available()) {
     uint8_t c = (uint8_t)Serial2.read();
 
-    // 1. Feed UBX binary decoder
-    processUbxByte(c);
+    const bool wasIdle = galileoDecoder.idle();
+    GalileoInavPage page;
+    if (galileoDecoder.feed(c, page)) forwardInav(page);
 
-    // 2. Buffer NMEA sentences when not inside a UBX packet
-    if (ubxState == UBX_WAIT_SYNC1) {
+    // Exclude every UBX byte, including the final checksum byte, from NMEA.
+    if (wasIdle && galileoDecoder.idle()) {
       if (c == '$') {
         nmeaBuffer = "$";
         isNmea = true;

@@ -222,7 +222,7 @@ class GnssTelemetryBridge: ObservableObject {
 
         // Append demo NMEA & $GALINAV / $GALE6HAS sentences to NMEA terminal and parse pipelines
         let hexStr = frameBytes.map { String(format: "%02X", $0) }.joined()
-        let ggaLine = String(format: "$GNGGA,1030%02d.00,4025.0065,N,00342.2274,W,4,18,0.68,667.0,M,48.0,M,1.0,E6HAS*4A", nativeEpoch % 60)
+        let ggaLine = F9pTelemetry.withChecksum(String(format: "$GNGGA,1030%02d.00,4025.0065,N,00342.2274,W,4,18,0.68,667.0,M,48.0,M,1.0,E6HAS", nativeEpoch % 60))
         let gstLine = String(format: "$GNGST,1030%02d.00,0.18,0.09,0.07,22.5,0.08,0.07,0.14*5C", nativeEpoch % 60)
         let inavLine = "$GALINAV,\(svid),\(wt),\(hexStr),827BB238C8*3F"
         let hasLine = String(format: "$GALE6HAS,%02d,%d,-11.4,B747%02X01A55BF8C9CBFCF70422081475FD445DF0FF*7E", svid, (nativeEpoch % 15) + 1, svid)
@@ -430,6 +430,15 @@ class GnssTelemetryBridge: ObservableObject {
         // If native in-process simulator is running, ignore incoming UDP packets to avoid duplicate stream collisions
         guard !isSdrEngineRunning else { return }
 
+        // A RAW datagram is binary. Dispatch it before any text conversion.
+        if data.starts(with: F9pTelemetry.rawPrefix) {
+            if let vm = viewModel, vm.selectedMode == 2,
+               let page = F9pTelemetry.decodeDatagram(data) {
+                vm.handleF9pPage(page)
+            }
+            return
+        }
+
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if let payload = json["data"] as? String {
                 parseNmeaOrBinText(payload)
@@ -510,7 +519,11 @@ class GnssTelemetryBridge: ObservableObject {
         }
         bluetoothManager?.nmeaSentences.append(text)
 
-        vm.processIncomingNmea(text)
+        if let page = F9pTelemetry.decodeSentence(text) {
+            vm.handleF9pPage(page)
+        } else {
+            vm.processIncomingNmea(text)
+        }
     }
 
     private func parseNmeaCoord(_ rawVal: String, dir: String) -> Double? {

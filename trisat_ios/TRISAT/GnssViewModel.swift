@@ -482,16 +482,22 @@ class GnssViewModel: ObservableObject {
         if trimmed.contains("GSV") {
             parseGsvLine(trimmed)
         }
-        if trimmed.contains("$GALINAV") || trimmed.contains("$RAWNAV") {
-            parseGalinavSentence(trimmed)
-        }
     }
 
     func parseGgaSentence(_ line: String) {
-        let parts = line.components(separatedBy: ",")
-        guard parts.count >= 10 else { return }
-
+        guard let parts = F9pTelemetry.ggaFields(line) else { return }
         let fixQuality = parts[6]
+        guard F9pTelemetry.measuredFix(fixQuality) else {
+            hasExternalHardwareFix = false
+            numSatellitesInFix = 0
+            hdopValue = "--"
+            if !isSimulatedTelemetry {
+                fixTypeDesc = "No measured fix"
+                accuracyText = "No measured fix"
+                locationText = "Waiting for a measured fix"
+            }
+            return
+        }
         let numSats = Int(parts[7]) ?? 0
         let hdop = parts[8]
         let alt = parts[9]
@@ -502,13 +508,9 @@ class GnssViewModel: ObservableObject {
         if !hdop.isEmpty && hdop != "--" {
             self.hdopValue = hdop
         }
-        if fixQuality != "0" && !fixQuality.isEmpty {
-            self.hasExternalHardwareFix = true
-        }
-
         if let lat = parseNmeaCoord(parts[2], dir: parts[3]),
            let lon = parseNmeaCoord(parts[4], dir: parts[5]) {
-            self.hasExternalHardwareFix = true
+            self.hasExternalHardwareFix = !self.isSimulatedTelemetry
 
             if simulatedThreatMode == .nominal && (selectedMode == 1 || selectedMode == 2) {
                 if selectedMode == 1 || !self.fixTypeDesc.contains("DUAL-SDR") {
@@ -537,7 +539,7 @@ class GnssViewModel: ObservableObject {
         guard simulatedThreatMode == .nominal else { return }
         let parts = line.components(separatedBy: ",")
         if parts.count >= 8 {
-            let rms = parts[3]
+            let rms = parts[2]
             let latErr = parts[6]
             let lonErr = parts[7].components(separatedBy: "*")[0]
 
@@ -606,22 +608,11 @@ class GnssViewModel: ObservableObject {
         }
     }
 
-    func parseGalinavSentence(_ line: String) {
-        let parts = line.components(separatedBy: ",")
-        guard parts.count >= 4,
-              let svid = Int(parts[1]), (1...36).contains(svid),
-              let wt = Int(parts[2]),
-              let payload = GalileoINavMessage.decodeHexPayload(parts[3].components(separatedBy: "*")[0])
-        else { return }
-        let inavMsg = GalileoINavMessage(
-            svid: svid,
-            submessageId: wt,
-            data: payload,
-            status: 0,
-            timestamp: Date(),
-            band: "E1-B"
-        )
-        self.handleInavMessage(inavMsg)
+    func handleF9pPage(_ page: F9pTelemetry.Page) {
+        handleInavMessage(GalileoINavMessage(
+            svid: page.svid, submessageId: page.wordType, data: page.data,
+            status: 0, timestamp: Date(), band: page.band
+        ))
     }
 
     func parseGsvLine(_ text: String) {
@@ -727,7 +718,6 @@ class GnssViewModel: ObservableObject {
         satelliteStore = satelliteStore.filter { $0.value.lastSeen > activeThreshold }
         liveBridgeSatellites = satelliteStore.values.map { $0.info }
         if !liveBridgeSatellites.isEmpty {
-            hasExternalHardwareFix = true
             updateSatellites()
         }
     }

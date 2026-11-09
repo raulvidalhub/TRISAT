@@ -59,7 +59,7 @@ The **ESP32 Hybrid Bridge** is the recommended wireless adapter for portable fie
 ### Flashing Instructions (Arduino IDE):
 1. Install the **ESP32 Board Package** in Arduino IDE (`esp32 by Espressif Systems`).
 2. Open [`esp32_hybrid_bridge/esp32_hybrid_bridge.ino`](esp32_hybrid_bridge/esp32_hybrid_bridge.ino).
-3. Select Board: **ESP32 Dev Module**.
+3. Select **ESP32 Dev Module** and the **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)** partition scheme. The Wi-Fi and BLE firmware exceeds the default app partition on Arduino ESP32 core 3.3.12.
 4. Select Port: `/dev/cu.usbserial-*` (or `/dev/cu.wchusbserial*`).
 5. Upload the sketch.
 
@@ -82,7 +82,7 @@ Used for direct USB-C connection between the SparkFun ZED-F9P board and a Mac or
   $GALINAV,<svid>,<word_type>,<60 hex digits>,<E1-B or E5b-I>*<checksum>
   ```
 
-  The hex contains the two 120-bit page parts in transmission order, including their tail bits. The sentence checksum covers the ASCII body. CRC verification checks the I/NAV bits and leaves OSNMA authentication separate. The option is off by default because the current Apple I/NAV display assumes the legacy payload layout.
+  The hex contains the two 120-bit page parts in transmission order, including their tail bits. The sentence checksum covers the ASCII body. CRC verification checks the I/NAV bits and leaves OSNMA authentication separate. Apple apps can decode the default binary UDP output directly. Leave the option off when using Apple over USB to avoid sending the same page twice. The ESP32 bridge emits the decoded format over Wi-Fi and paced BLE.
 
 * **Test without a receiver:**
   ```bash
@@ -91,6 +91,8 @@ Used for direct USB-C connection between the SparkFun ZED-F9P board and a Mac or
   Tests include nominal E1-B page pairs from Annex A.6.3 and a published E5b-I example, wrapped in UBX for transport testing. [Galileo OSNMA Receiver Guidelines](https://www.gsc-europa.eu/sites/default/files/sites/all/files/Galileo-OSNMA-RX-Guidelines_in_force.pdf) · [NovAtel E5b-I example](https://docs.novatel.com/OEM7/Content/Logs/GALINAVRAWDATA.htm)
 
 * **Receiver follow-up:** With the receiver in open sky, run the bridge with `--emit-galinav`. Save the binary `RXM-SFRBX` stream and UDP datagrams from the same interval. Record the module variant and firmware, then compare SVID, signal ID and word type between the binary capture and the decoded output.
+
+* **Apple and ESP32 checks:** The F9P consumer workflow compiles both Apple apps and the ESP32 sketch. Its host tests feed the same published I/NAV examples through the firmware decoder and the shared Swift decoder, checking the bytes, word type, band and checksums. With the receiver connected, compare the same page on USB UDP and ESP32 Wi-Fi, then check BLE separately at its configured pacing. Confirm that a GGA quality of zero clears the measured-fix indication.
 
 * **Factory Restore:**
   ```bash

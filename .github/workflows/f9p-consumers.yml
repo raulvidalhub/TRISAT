@@ -1,0 +1,61 @@
+name: F9P consumer tests
+
+on:
+  push:
+    branches: [codex/f9p-apple-esp32]
+  pull_request:
+    paths:
+      - .github/workflows/f9p-consumers.yml
+      - trisat_hw/esp32/**
+      - trisat_hw/zed_f9p/**
+      - trisat_ios/**
+      - trisat_mac/**
+
+permissions:
+  contents: read
+
+jobs:
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: trisat_ios/TRISAT.xcodeproj
+            destination: generic/platform=iOS Simulator
+          - project: trisat_mac/TRISAT.xcodeproj
+            destination: generic/platform=macOS
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Apple app
+        run: xcodebuild -project "${{ matrix.project }}" -scheme TRISAT -destination "${{ matrix.destination }}" CODE_SIGNING_ALLOWED=NO build
+      - name: Test the Swift and C++ parsers
+        if: matrix.project == 'trisat_mac/TRISAT.xcodeproj'
+        run: |
+          tests=trisat_hw/zed_f9p/tests
+          swiftc -typecheck trisat_ios/TRISAT/F9pTelemetry.swift trisat_ios/TRISAT/GalileoINavMessage.swift trisat_ios/TRISAT/MacSerialPortManager.swift
+          swiftc trisat_ios/TRISAT/F9pTelemetry.swift "$tests/F9pProbe.swift" -o "$RUNNER_TEMP/f9p-swift"
+          clang++ -std=c++11 -Wall -Wextra -Werror -I trisat_hw/esp32/esp32_hybrid_bridge "$tests/f9p_probe.cpp" -o "$RUNNER_TEMP/f9p-cpp"
+          python3 -m trisat_hw.zed_f9p.tests.check_f9p_consumers "$RUNNER_TEMP/f9p-swift" "$RUNNER_TEMP/f9p-cpp"
+          python3 -m unittest discover -s "$tests" -v
+
+  esp32:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
+        with:
+          version: '1.3.1'
+      - name: Build the ESP32 bridge
+        env:
+          ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls "$ESP32_INDEX"
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs trisat_hw/esp32/esp32_hybrid_bridge

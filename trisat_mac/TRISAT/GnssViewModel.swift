@@ -89,6 +89,10 @@ class GnssViewModel: ObservableObject {
         }
     }
     
+    func handleInavMessage(_ message: GalileoINavMessage) {
+        repository.appendRealInavMessage(message)
+    }
+
     private func setupBindings() {
         repository.$lastLocation
             .compactMap { $0 }
@@ -112,6 +116,10 @@ class GnssViewModel: ObservableObject {
         repository.$capturedMessages
             .receive(on: DispatchQueue.main)
             .assign(to: &$messages)
+
+        bluetoothManager.onInavFrameReceived = { [weak self] message in
+            self?.handleInavMessage(message)
+        }
 
         bluetoothManager.onNmeaLineReceived = { [weak self] line in
             guard let self = self else { return }
@@ -154,49 +162,55 @@ class GnssViewModel: ObservableObject {
     }
 
     private func parseGgaSentence(_ line: String) {
-        let parts = line.components(separatedBy: ",")
-        if parts.count >= 10 {
-            if let lat = parseNmeaCoord(parts[2], dir: parts[3]),
-               let lon = parseNmeaCoord(parts[4], dir: parts[5]) {
-                let fixQuality = parts[6]
-                let numSats = Int(parts[7]) ?? 0
-                let hdop = parts[8]
-                let alt = parts[9]
+        guard let parts = F9pTelemetry.ggaFields(line) else { return }
+        guard F9pTelemetry.measuredFix(parts[6]) else {
+            fixTypeDesc = "No measured fix"
+            numSatellitesInFix = 0
+            hdopValue = "--"
+            locationText = "Waiting for a measured fix"
+            accuracyText = "No measured fix"
+            return
+        }
 
-                self.numSatellitesInFix = numSats
-                self.hdopValue = hdop.isEmpty ? "--" : hdop
+        if let lat = parseNmeaCoord(parts[2], dir: parts[3]),
+           let lon = parseNmeaCoord(parts[4], dir: parts[5]) {
+            let fixQuality = parts[6]
+            let numSats = Int(parts[7]) ?? 0
+            let hdop = parts[8]
+            let alt = parts[9]
 
-                self.fixTypeDesc = {
-                    switch fixQuality {
-                    case "1": return "GPS Autonomous"
-                    case "2": return "DGPS Differential (SXblue)"
-                    case "4": return "RTK Fixed (Centimeter)"
-                    case "5": return "RTK Float"
-                    case "6": return "Dead Reckoning"
-                    default: return "Fix Mode \(fixQuality)"
-                    }
-                }()
+            self.numSatellitesInFix = numSats
+            self.hdopValue = hdop.isEmpty ? "--" : hdop
 
-                if parts.count >= 14 {
-                    let age = parts[11]
-                    let station = parts[12].components(separatedBy: "*")[0]
-                    self.dgpsAge = age.isEmpty ? "N/A" : "\(age)s"
-                    self.dgpsStationId = station.isEmpty ? "N/A" : station
+            self.fixTypeDesc = {
+                switch fixQuality {
+                case "1": return "GPS Autonomous"
+                case "2": return "DGPS Differential (SXblue)"
+                case "4": return "RTK Fixed (Centimeter)"
+                case "5": return "RTK Float"
+                default: return "Fix Mode \(fixQuality)"
                 }
+            }()
 
-                self.currentCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                let latDir = lat >= 0 ? "N" : "S"
-                let lonDir = lon >= 0 ? "E" : "W"
-                self.locationText = String(format: "%.6f° %@, %.6f° %@", abs(lat), latDir, abs(lon), lonDir)
-                self.accuracyText = "Fix: \(fixTypeDesc) | Sats: \(numSats) | HDOP: \(hdopValue) | Alt: \(alt)m"
+            if parts.count >= 14 {
+                let age = parts[11]
+                let station = parts[12].components(separatedBy: "*")[0]
+                self.dgpsAge = age.isEmpty ? "N/A" : "\(age)s"
+                self.dgpsStationId = station.isEmpty ? "N/A" : station
             }
+
+            self.currentCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            let latDir = lat >= 0 ? "N" : "S"
+            let lonDir = lon >= 0 ? "E" : "W"
+            self.locationText = String(format: "%.6f° %@, %.6f° %@", abs(lat), latDir, abs(lon), lonDir)
+            self.accuracyText = "Fix: \(fixTypeDesc) | Sats: \(numSats) | HDOP: \(hdopValue) | Alt: \(alt)m"
         }
     }
 
     private func parseGstSentence(_ line: String) {
         let parts = line.components(separatedBy: ",")
         if parts.count >= 8 {
-            let rms = parts[3]
+            let rms = parts[2]
             let latErr = parts[6]
             let lonErr = parts[7].components(separatedBy: "*")[0]
 
